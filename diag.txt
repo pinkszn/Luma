@@ -1,0 +1,7 @@
+Luma diagnostics
+UTC offset: 480 min
+Displays: 1
+  [0] Generic PnP Monitor | \\.\DISPLAY1 | 3440x1440 | ddc=false
+      DDC probe: GetNumberOfPhysicalMonitors -> ok=1 count=1 err=6
+      brightness: unavailable
+WMI panel brightness: not available
