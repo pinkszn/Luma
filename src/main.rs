@@ -547,6 +547,8 @@ struct App {
     last_manual_bright: u64,
     dim_last_status: String,
     tray: bool,
+    /// Win32 error from the most recent failed `Shell_NotifyIconW(NIM_ADD)`.
+    tray_err: u32,
 }
 
 impl App {
@@ -593,6 +595,7 @@ impl App {
             last_manual_bright: 0,
             dim_last_status: String::new(),
             tray: false,
+            tray_err: 0,
         }
     }
 
@@ -2822,21 +2825,36 @@ impl App {
             let v = Shell_NotifyIconW(NIM_SETVERSION, &nid);
             self.log_tray(&format!("NIM_SETVERSION ok={v} err={}", GetLastError()));
             self.tray = true;
+            self.tray_err = 0;
         } else {
             self.tray = false;
+            self.tray_err = err;
         }
     }
 
-    /// Append a line to `%APPDATA%\Luma\tray.log`; failures are ignored.
+    /// Append a line to `%APPDATA%\Luma\tray.log`, falling back to a log next to
+    /// the executable; failures are ignored.
     fn log_tray(&self, msg: &str) {
         use std::io::Write;
         let dir = settings::config_dir();
         let _ = std::fs::create_dir_all(&dir);
-        if let Ok(mut f) = std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(dir.join("tray.log"))
-        {
+            .ok();
+        if file.is_none() {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent() {
+                    file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(parent.join("tray.log"))
+                        .ok();
+                }
+            }
+        }
+        if let Some(f) = file.as_mut() {
             let _ = writeln!(f, "{} {msg}", settings::now_epoch());
         }
     }
@@ -4015,6 +4033,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             }
             return 0;
         }
+        WM_SHOWWINDOW => {
+            // The window is created hidden; retry the icon once it is on screen,
+            // since some Explorer builds reject icons for not-yet-shown windows.
+            if w != 0 {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+                if !ptr.is_null() {
+                    let app = &mut *ptr;
+                    if !app.tray {
+                        app.add_tray();
+                    }
+                }
+            }
+            return 0;
+        }
         WM_CLOSE => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
             if !ptr.is_null() {
@@ -4026,13 +4058,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     if app.tray {
                         ShowWindow(hwnd, SW_HIDE);
                     } else {
-                        message_box(
-                            hwnd,
-                            "Luma could not add a tray icon, so the window stays open. \
-                             Choose a different close behaviour in Settings, or restart Explorer.",
-                            "Luma",
-                            0x30,
+                        let text = format!(
+                            "Luma could not add a tray icon (Windows error {}), so the window \
+                             stays open. Choose a different close behaviour in Settings, or \
+                             restart Explorer.",
+                            app.tray_err
                         );
+                        message_box(hwnd, &text, "Luma", 0x30);
                     }
                 } else {
                     DestroyWindow(hwnd);

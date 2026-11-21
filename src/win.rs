@@ -269,6 +269,7 @@ pub const WM_SIZE: u32 = 0x0005;
 pub const WM_PAINT: u32 = 0x000F;
 pub const WM_CLOSE: u32 = 0x0010;
 pub const WM_ERASEBKGND: u32 = 0x0014;
+pub const WM_SHOWWINDOW: u32 = 0x0018;
 pub const RDW_INVALIDATE: u32 = 0x0001;
 pub const RDW_ERASE: u32 = 0x0004;
 pub const RDW_ALLCHILDREN: u32 = 0x0080;
