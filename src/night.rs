@@ -87,28 +87,22 @@ fn smooth(x: f64) -> f64 {
 pub fn solar_summary(s: &Settings, now: LocalNow) -> String {
     match solar_times(s.lat, s.lon, s.tz, now.year, now.month, now.day) {
         Some((rise, set)) => format!(
-            "Today: sunrise {} · sunset {}  ·  {:.4}, {:.4}  UTC{}{}",
+            "Sunrise {} · Sunset {}\n{:.4}, {:.4} ·  UTC{}{}",
             fmt_min(rise as i32 + s.sunrise_offset),
             fmt_min(set as i32 + s.sunset_offset),
             s.lat,
             s.lon,
             if s.tz >= 0.0 { "+" } else { "-" },
             fmt_offset(s.tz)
-        ),
-        None => "No sunrise/sunset at this latitude today (polar day/night).".to_string(),
+        ),        None => "No sunrise or sunset at this latitude today (polar day or night).".to_string(),
     }
 }
 
 fn fmt_offset(tz: f64) -> String {
-    let sign = if tz < 0.0 { "-" } else { "" };
     let a = tz.abs();
     let h = a.floor() as i32;
     let m = ((a - h as f64) * 60.0).round() as i32;
-    if m == 0 {
-        format!("{}{}", sign, h)
-    } else {
-        format!("{}{}:{:02}", sign, h, m)
-    }
+    format!("{:02}:{:02}", h, m)
 }
 
 /// Compute the active window for the current date. Returns

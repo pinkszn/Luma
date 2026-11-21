@@ -223,6 +223,12 @@ pub const CBS_OWNERDRAWFIXED: u32 = 0x0010;
 pub const CBS_HASSTRINGS: u32 = 0x0200;
 pub const ODT_COMBOBOX: u32 = 3;
 pub const ODS_COMBOBOXEDIT: u32 = 0x1000;
+pub const CB_SETITEMHEIGHT: u32 = 0x0153;
+pub const LB_SETITEMHEIGHT: u32 = 0x01A0;
+pub const LB_GETTEXT: u32 = 0x0189;
+pub const LBS_OWNERDRAWFIXED: u32 = 0x0010;
+pub const LBS_HASSTRINGS: u32 = 0x0020;
+pub const ODT_LISTBOX: u32 = 2;
 pub const ES_AUTOHSCROLL: u32 = 0x80;
 pub const LBS_NOTIFY: u32 = 0x1;
 pub const LBS_NOINTEGRALHEIGHT: u32 = 0x100;
@@ -523,6 +529,8 @@ extern "system" {
     pub fn SetFocus(hWnd: HWND) -> HWND;
     pub fn GetFocus() -> HWND;
     pub fn GetParent(hWnd: HWND) -> HWND;
+    pub fn GetDC(hWnd: HWND) -> HDC;
+    pub fn ReleaseDC(hWnd: HWND, hDC: HDC) -> i32;
     pub fn SetCapture(hWnd: HWND) -> HWND;
     pub fn ReleaseCapture() -> BOOL;
     pub fn GetCapture() -> HWND;
@@ -561,6 +569,19 @@ extern "system" {
         pdm: *const c_void,
     ) -> HDC;
     pub fn DeleteDC(hdc: HDC) -> BOOL;
+    pub fn CreateCompatibleDC(hdc: HDC) -> HDC;
+    pub fn CreateCompatibleBitmap(hdc: HDC, cx: i32, cy: i32) -> HANDLE;
+    pub fn BitBlt(
+        hdc: HDC,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        src: HDC,
+        sx: i32,
+        sy: i32,
+        rop: u32,
+    ) -> BOOL;
     pub fn SetDeviceGammaRamp(hdc: HDC, lpRamp: *const c_void) -> BOOL;
     pub fn GetDeviceGammaRamp(hdc: HDC, lpRamp: *mut c_void) -> BOOL;
     pub fn CreateSolidBrush(color: u32) -> HBRUSH;
@@ -590,6 +611,8 @@ extern "system" {
         lprc: *mut RECT,
         format: u32,
     ) -> i32;
+    pub fn MoveToEx(hdc: HDC, x: i32, y: i32, lppt: *mut POINT) -> BOOL;
+    pub fn LineTo(hdc: HDC, x: i32, y: i32) -> BOOL;
 }
 
 #[link(name = "shell32")]

@@ -34,12 +34,14 @@ const fn rgb(r: u32, g: u32, b: u32) -> u32 {
 pub struct Palette {
     pub bg: u32,
     pub card: u32,
+    pub well: u32,
     pub border: u32,
     pub text: u32,
     pub muted: u32,
     pub accent: u32,
     pub accent_dark: u32,
     pub accent_soft: u32,
+    pub accent_ink: u32,
     pub header: u32,
     pub header_sub: u32,
     pub nav_dot: u32,
@@ -50,12 +52,16 @@ pub struct Palette {
 pub const LIGHT_PALETTE: Palette = Palette {
     bg: rgb(0xF4, 0xF5, 0xF7),
     card: rgb(0xFF, 0xFF, 0xFF),
+    well: rgb(0xF1, 0xF3, 0xF7),
     border: rgb(0xE3, 0xE6, 0xEC),
     text: rgb(0x20, 0x26, 0x33),
     muted: rgb(0x6C, 0x77, 0x89),
     accent: rgb(0xE0, 0x7B, 0x39),
     accent_dark: rgb(0xB9, 0x5A, 0x1F),
     accent_soft: rgb(0xFB, 0xEE, 0xE4),
+    // Ink for text and glyphs drawn on top of the accent fill. The accent is
+    // a mid-tone orange, so white only reaches ~2.6:1; near-black is ~5.7:1.
+    accent_ink: rgb(0x2B, 0x14, 0x05),
     header: rgb(0x17, 0x1C, 0x26),
     header_sub: rgb(0xAC, 0xB5, 0xC4),
     nav_dot: rgb(0xC3, 0xC9, 0xD4),
@@ -66,12 +72,14 @@ pub const LIGHT_PALETTE: Palette = Palette {
 pub const DARK_PALETTE: Palette = Palette {
     bg: rgb(0x13, 0x17, 0x1E),
     card: rgb(0x1C, 0x22, 0x2B),
+    well: rgb(0x23, 0x2A, 0x35),
     border: rgb(0x30, 0x38, 0x45),
     text: rgb(0xE8, 0xEC, 0xF2),
     muted: rgb(0x98, 0xA3, 0xB3),
     accent: rgb(0xE8, 0x8A, 0x4A),
     accent_dark: rgb(0xC9, 0x6A, 0x2C),
     accent_soft: rgb(0x39, 0x2A, 0x1E),
+    accent_ink: rgb(0x2B, 0x14, 0x05),
     header: rgb(0x0B, 0x0E, 0x13),
     header_sub: rgb(0x9A, 0xA5, 0xB3),
     nav_dot: rgb(0x4A, 0x54, 0x64),
@@ -81,6 +89,7 @@ pub const DARK_PALETTE: Palette = Palette {
 
 static DARK_MODE: AtomicBool = AtomicBool::new(false);
 static VCP_EDIT_OLD_PROC: AtomicIsize = AtomicIsize::new(0);
+static COMBO_OLD_PROC: AtomicIsize = AtomicIsize::new(0);
 
 unsafe extern "system" fn vcp_edit_subclass(
     hwnd: HWND,
@@ -107,6 +116,77 @@ unsafe extern "system" fn vcp_edit_subclass(
     )
 }
 
+/// Combo boxes draw their closed field themselves from `WM_DRAWITEM`, but the
+/// drop arrow lives outside that path and comes out as a light system button on
+/// a dark card. Paint it in the palette colours after every paint.
+unsafe fn draw_combo_arrow(hwnd: HWND, hdc: HDC) {
+    if hdc.is_null() {
+        return;
+    }
+    let mut rc: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut rc);
+    if rc.right - rc.left < 40 {
+        return;
+    }
+    // Cover the 1px system frame that is left inside the client area.
+    let strips = [
+        RECT { left: rc.left, top: rc.top, right: rc.right, bottom: rc.top + 2 },
+        RECT { left: rc.left, top: rc.bottom - 2, right: rc.right, bottom: rc.bottom },
+        RECT { left: rc.left, top: rc.top, right: rc.left + 2, bottom: rc.bottom },
+        RECT { left: rc.right - 2, top: rc.top, right: rc.right, bottom: rc.bottom },
+    ];
+    for s in &strips {
+        fill_color(hdc, s, pal().card);
+    }
+    let frame = RECT {
+        left: rc.right - 30,
+        top: 1,
+        right: rc.right - 1,
+        bottom: rc.bottom - 1,
+    };
+    round_fill(hdc, &frame, 5, pal().well, pal().border);
+    let cx = (frame.left + frame.right) / 2;
+    let cy = (frame.top + frame.bottom) / 2;
+    for row in 0..5 {
+        let tri = RECT {
+            left: cx - 4 + row,
+            top: cy - 2 + row,
+            right: cx + 5 - row,
+            bottom: cy - 1 + row,
+        };
+        fill_color(hdc, &tri, pal().muted);
+    }
+}
+
+unsafe extern "system" fn combo_arrow_subclass(
+    hwnd: HWND,
+    msg: u32,
+    w: usize,
+    l: isize,
+) -> isize {
+    const WM_PRINTCLIENT: u32 = 0x0318;
+    if msg == 0x0085 {
+        // WM_NCPAINT: the themed frame is a light 1px box on a dark card, and
+        // the field already draws its own border.
+        return 0;
+    }
+    let r = CallWindowProcW(
+        COMBO_OLD_PROC.load(Ordering::Relaxed),
+        hwnd,
+        msg,
+        w,
+        l,
+    );
+    if msg == WM_PAINT {
+        let hdc = GetDC(hwnd);
+        draw_combo_arrow(hwnd, hdc);
+        ReleaseDC(hwnd, hdc);
+    } else if msg == WM_PRINTCLIENT && l != 0 {
+        draw_combo_arrow(hwnd, l as HDC);
+    }
+    r
+}
+
 pub fn pal() -> &'static Palette {
     if DARK_MODE.load(Ordering::Relaxed) {
         &DARK_PALETTE
@@ -125,6 +205,98 @@ const HEADER_H: i32 = 92;
 const SIDE_W: i32 = 208;
 const CONTENT_X: i32 = 232;
 const CONTENT_W: i32 = CLIENT_W - CONTENT_X - 24;
+
+// Sunrise/sunset presets. Offsets are standard time; the "Use system" button
+// follows Windows including daylight saving.
+const CITIES: &[(&str, f64, f64, f64)] = &[
+    ("Amsterdam, Netherlands", 52.3676, 4.9041, 1.0),
+    ("Anchorage, USA", 61.2181, -149.9003, -9.0),
+    ("Athens, Greece", 37.9838, 23.7275, 2.0),
+    ("Auckland, New Zealand", -36.8485, 174.7633, 12.0),
+    ("Bangkok, Thailand", 13.7563, 100.5018, 7.0),
+    ("Berlin, Germany", 52.5200, 13.4050, 1.0),
+    ("Bogotá, Colombia", 4.7110, -74.0721, -5.0),
+    ("Brisbane, Australia", -27.4698, 153.0251, 10.0),
+    ("Buenos Aires, Argentina", -34.6037, -58.3816, -3.0),
+    ("Cairo, Egypt", 30.0444, 31.2357, 2.0),
+    ("Cebu, Philippines", 10.3157, 123.8854, 8.0),
+    ("Chicago, USA", 41.8781, -87.6298, -6.0),
+    ("Denver, USA", 39.7392, -104.9903, -7.0),
+    ("Dubai, UAE", 25.2048, 55.2708, 4.0),
+    ("Dublin, Ireland", 53.3498, -6.2603, 0.0),
+    ("Hanoi, Vietnam", 21.0278, 105.8342, 7.0),
+    ("Hong Kong", 22.3193, 114.1694, 8.0),
+    ("Honolulu, USA", 21.3069, -157.8583, -10.0),
+    ("Istanbul, Türkiye", 41.0082, 28.9784, 3.0),
+    ("Jakarta, Indonesia", -6.2088, 106.8456, 7.0),
+    ("Johannesburg, South Africa", -26.2041, 28.0473, 2.0),
+    ("Kuala Lumpur, Malaysia", 3.1390, 101.6869, 8.0),
+    ("Lagos, Nigeria", 6.5244, 3.3792, 1.0),
+    ("Lima, Peru", -12.0464, -77.0428, -5.0),
+    ("Lisbon, Portugal", 38.7223, -9.1393, 0.0),
+    ("London, United Kingdom", 51.5074, -0.1278, 0.0),
+    ("Los Angeles, USA", 34.0522, -118.2437, -8.0),
+    ("Madrid, Spain", 40.4168, -3.7038, 1.0),
+    ("Manila, Philippines", 14.5995, 120.9842, 8.0),
+    ("Melbourne, Australia", -37.8136, 144.9631, 10.0),
+    ("Mexico City, Mexico", 19.4326, -99.1332, -6.0),
+    ("Moscow, Russia", 55.7558, 37.6173, 3.0),
+    ("Mumbai, India", 19.0760, 72.8777, 5.5),
+    ("Nairobi, Kenya", -1.2921, 36.8219, 3.0),
+    ("New Delhi, India", 28.6139, 77.2090, 5.5),
+    ("New York, USA", 40.7128, -74.0060, -5.0),
+    ("Paris, France", 48.8566, 2.3522, 1.0),
+    ("Perth, Australia", -31.9505, 115.8605, 8.0),
+    ("Reykjavík, Iceland", 64.1466, -21.9426, 0.0),
+    ("Riyadh, Saudi Arabia", 24.7136, 46.6753, 3.0),
+    ("Rome, Italy", 41.9028, 12.4964, 1.0),
+    ("Santiago, Chile", -33.4489, -70.6693, -4.0),
+    ("Seattle, USA", 47.6062, -122.3321, -8.0),
+    ("Seoul, South Korea", 37.5665, 126.9780, 9.0),
+    ("Shanghai, China", 31.2304, 121.4737, 8.0),
+    ("Singapore", 1.3521, 103.8198, 8.0),
+    ("Stockholm, Sweden", 59.3293, 18.0686, 1.0),
+    ("Sydney, Australia", -33.8688, 151.2093, 10.0),
+    ("São Paulo, Brazil", -23.5505, -46.6333, -3.0),
+    ("Taipei, Taiwan", 25.0330, 121.5654, 8.0),
+    ("Tokyo, Japan", 35.6762, 139.6503, 9.0),
+    ("Toronto, Canada", 43.6532, -79.3832, -5.0),
+    ("Vancouver, Canada", 49.2827, -123.1207, -8.0),
+];
+
+const TZ_MIN: f64 = -12.0;
+const TZ_COUNT: usize = 53; // -12:00 .. +14:00 in half-hour steps
+
+fn tz_label(tz: f64) -> String {
+    let sign = if tz < 0.0 { '-' } else { '+' };
+    let a = tz.abs();
+    let h = a.floor() as i32;
+    let m = ((a - h as f64) * 60.0).round() as i32;
+    format!("UTC{}{:02}:{:02}", sign, h, m)
+}
+
+fn tz_selection(tz: f64) -> usize {
+    (((tz - TZ_MIN) * 2.0).round() as i64).clamp(0, TZ_COUNT as i64 - 1) as usize
+}
+
+/// Nearest preset for a coordinate pair, if it is close enough to be the one
+/// the user picked (otherwise the fields are custom).
+fn city_selection(lat: f64, lon: f64) -> Option<usize> {
+    let mut best = None;
+    let mut best_d = f64::MAX;
+    for (i, (_, la, lo, _)) in CITIES.iter().enumerate() {
+        let d = (la - lat).abs() + (lo - lon).abs();
+        if d < best_d {
+            best_d = d;
+            best = Some(i);
+        }
+    }
+    if best_d <= 0.05 {
+        best
+    } else {
+        None
+    }
+}
 
 const C_HEADER: u16 = 70;
 const C_SIDEBAR: u16 = 71;
@@ -185,6 +357,8 @@ const C_NL_MODE_LABEL: u16 = 222;
 const C_NL_SOLAR_GROUP: u16 = 223;
 const C_NL_CUSTOM_GROUP: u16 = 224;
 const C_NL_TUNING_GROUP: u16 = 225;
+const C_NL_LOCATION: u16 = 228;
+const C_NL_USE_TZ: u16 = 229;
 
 const C_AUTOSTART: u16 = 301;
 const C_MINIMIZE: u16 = 302;
@@ -212,6 +386,8 @@ const C_DIM_GROUP_A: u16 = 411;
 const C_DIM_GROUP_B: u16 = 412;
 const C_DIM_GROUP_C: u16 = 413;
 const C_DIM_STATUS: u16 = 414;
+const C_DIM_CHART: u16 = 415;
+const C_DIM_GAUGE: u16 = 416;
 
 const C_FOOTER: u16 = 901;
 
@@ -267,6 +443,8 @@ struct Controls {
     nl_enable: HWND,
     nl_mode: HWND,
     nl_status: HWND,
+    nl_location: HWND,
+    use_tz: HWND,
     lat: HWND,
     lon: HWND,
     tz: HWND,
@@ -300,6 +478,8 @@ struct Controls {
     dim_phase: HWND,
     dim_apply: HWND,
     dim_status: HWND,
+    dim_chart: HWND,
+    dim_gauge: HWND,
 
     autostart: HWND,
     minimize: HWND,
@@ -334,9 +514,11 @@ struct App {
     page: usize,
     br_bg: HBRUSH,
     br_card: HBRUSH,
+    br_well: HBRUSH,
 
     settings: Settings,
     displays: Vec<Display>,
+    mon_labels: Vec<String>,
     selected: usize,
     panel_brightness: Option<u32>,
     panel_checked: bool,
@@ -382,8 +564,10 @@ impl App {
             page: 0,
             br_bg: null_mut(),
             br_card: null_mut(),
+            br_well: null_mut(),
             settings,
             displays: Vec::new(),
+            mon_labels: Vec::new(),
             selected,
             panel_brightness: None,
             panel_checked: false,
@@ -415,6 +599,7 @@ impl App {
         set_dark_mode(self.settings.dark);
         self.br_bg = CreateSolidBrush(pal().bg);
         self.br_card = CreateSolidBrush(pal().card);
+        self.br_well = CreateSolidBrush(pal().well);
         self.fonts.base = make_font(-15, 400, "Segoe UI");
         self.fonts.bold = make_font(-15, 600, "Segoe UI Semibold");
         self.fonts.title = make_font(-30, 600, "Segoe UI Semibold");
@@ -449,7 +634,7 @@ impl App {
         if h.is_null() {
             return;
         }
-        SendMessageW(h, EM_SETBKGNDCOLOR, 0, pal().bg as isize);
+        SendMessageW(h, EM_SETBKGNDCOLOR, 0, pal().well as isize);
         let mut cf: CHARFORMATW = std::mem::zeroed();
         cf.cbSize = std::mem::size_of::<CHARFORMATW>() as u32;
         cf.dwMask = CFM_COLOR;
@@ -477,8 +662,12 @@ impl App {
         if !self.br_card.is_null() {
             DeleteObject(self.br_card as HANDLE);
         }
+        if !self.br_well.is_null() {
+            DeleteObject(self.br_well as HANDLE);
+        }
         self.br_bg = CreateSolidBrush(pal().bg);
         self.br_card = CreateSolidBrush(pal().card);
+        self.br_well = CreateSolidBrush(pal().well);
         self.restyle_edits();
         RedrawWindow(
             self.hwnd,
@@ -506,6 +695,14 @@ impl App {
     ) -> HWND {
         let cls = wide(class);
         let txt = wide(text);
+        // Combo boxes and list boxes are owner-drawn so their faces, selection
+        // bars and dropdown items use the theme colours instead of the system
+        // (white in dark mode) defaults.
+        let style = match class {
+            "COMBOBOX" => style | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
+            "LISTBOX" => style | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+            _ => style,
+        };
         let c = CreateWindowExW(
             ex,
             cls.as_ptr(),
@@ -525,10 +722,27 @@ impl App {
                 self.edits.push(c);
                 self.style_edit(c);
             } else if matches!(class, "COMBOBOX" | "LISTBOX") {
-                // Themed combo/list faces ignore WM_CTLCOLOR*, so turn the
-                // visual style off and let the parent paint the field.
-                let empty = wide(" ");
-                SetWindowTheme(c, empty.as_ptr(), empty.as_ptr());
+                // The border and drop arrow of a combo ignore WM_CTLCOLOR*, so
+                // pick a theme that matches the palette instead of a white field.
+                let theme = if DARK_MODE.load(Ordering::Relaxed) {
+                    wide("DarkMode_Explorer")
+                } else {
+                    wide(" ")
+                };
+                SetWindowTheme(c, theme.as_ptr(), theme.as_ptr());
+                if class == "COMBOBOX" {
+                    // -1 is the closed (static) portion, 0 the dropdown rows.
+                    SendMessageW(c, CB_SETITEMHEIGHT, 0, 24);
+                    SendMessageW(c, CB_SETITEMHEIGHT, usize::MAX, 24);
+                    let old_proc = SetWindowLongPtrW(
+                        c,
+                        GWLP_WNDPROC,
+                        combo_arrow_subclass as usize as isize,
+                    );
+                    COMBO_OLD_PROC.store(old_proc, Ordering::Relaxed);
+                } else {
+                    SendMessageW(c, LB_SETITEMHEIGHT, 0, 24);
+                }
             }
             SendMessageW(c, WM_SETFONT, self.fonts.base as usize, 1);
             if page > 0 && page <= self.pages.len() {
@@ -950,28 +1164,67 @@ impl App {
             2,
         );
 
-        self.card("Solar position", CONTENT_X + 408, 176, 396, 180, C_NL_SOLAR_GROUP, 2);
-        self.label("Latitude", CONTENT_X + 424, 210, 100, 18, 2);
+        self.card("Solar position", CONTENT_X + 408, 176, 396, 208, C_NL_SOLAR_GROUP, 2);
+        self.label("Location", CONTENT_X + 424, 212, 364, 18, 2);
+        self.controls.nl_location = self.ctl(
+            "COMBOBOX",
+            "",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
+            0,
+            CONTENT_X + 424,
+            230,
+            364,
+            260,
+            C_NL_LOCATION,
+            2,
+        );
+        for (name, _, _, _) in CITIES {
+            add_combo_string(self.controls.nl_location, name);
+        }
+        add_combo_string(self.controls.nl_location, "Custom coordinates");
+        self.label("Time zone", CONTENT_X + 424, 262, 200, 18, 2);
+        self.controls.tz = self.ctl(
+            "COMBOBOX",
+            "",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
+            0,
+            CONTENT_X + 424,
+            280,
+            250,
+            260,
+            C_NL_TZ,
+            2,
+        );
+        for i in 0..TZ_COUNT {
+            add_combo_string(self.controls.tz, &tz_label(TZ_MIN + i as f64 * 0.5));
+        }
+        self.controls.use_tz = self.button(
+            "Use system",
+            CONTENT_X + 680,
+            280,
+            108,
+            26,
+            C_NL_USE_TZ,
+            false,
+            2,
+        );
+        self.label("Lat", CONTENT_X + 424, 316, 22, 20, 2);
         self.controls.lat = self.ctl(
             "RICHEDIT50W", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0,
-            CONTENT_X + 424, 230, 100, 26, C_NL_LAT, 2);
-        self.label("Longitude", CONTENT_X + 532, 210, 100, 18, 2);
+            CONTENT_X + 450, 314, 84, 24, C_NL_LAT, 2);
+        self.label("Lon", CONTENT_X + 544, 316, 26, 20, 2);
         self.controls.lon = self.ctl(
             "RICHEDIT50W", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0,
-            CONTENT_X + 532, 230, 100, 26, C_NL_LON, 2);
-        self.label("UTC", CONTENT_X + 640, 210, 60, 18, 2);
-        self.controls.tz = self.ctl(
-            "RICHEDIT50W", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0,
-            CONTENT_X + 640, 230, 76, 26, C_NL_TZ, 2);
+            CONTENT_X + 574, 314, 84, 24, C_NL_LON, 2);
         self.controls.sun_info =
-            self.label("", CONTENT_X + 424, 266, 364, 80, 2);
+            self.label("", CONTENT_X + 424, 344, 364, 34, 2);
         SendMessageW(self.controls.sun_info, WM_SETFONT, self.fonts.small as usize, 1);
         SetWindowLongPtrW(self.controls.sun_info, GWLP_USERDATA, 4);
 
         self.controls.tuning_group = self.card(
             "Tint & transition",
             CONTENT_X + 408,
-            372,
+            400,
             396,
             296,
             C_NL_TUNING_GROUP,
@@ -980,47 +1233,47 @@ impl App {
         self.controls.reset_tint = self.button(
             "Defaults",
             CONTENT_X + 408 + 276,
-            378,
+            406,
             108,
             26,
             C_NL_RESET_TINT,
             false,
             2,
         );
-        self.label("Temperature", CONTENT_X + 424, 406, 200, 20, 2);
+        self.label("Temperature", CONTENT_X + 424, 434, 200, 20, 2);
         self.controls.temp = self.ctl(
             SLIDER_CLASS, "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_AUTOTICKS, 0,
-            CONTENT_X + 424, 428, 364, 30, C_NL_TEMP, 2);
+            CONTENT_X + 424, 456, 364, 30, C_NL_TEMP, 2);
         self.controls.temp_label =
-            self.value_label("—", CONTENT_X + 668, 406, 120, 20, 2);
+            self.value_label("—", CONTENT_X + 668, 434, 120, 20, 2);
         SetWindowLongPtrW(self.controls.temp_label, GWLP_USERDATA, 3);
-        self.label("Strength", CONTENT_X + 424, 464, 200, 20, 2);
+        self.label("Strength", CONTENT_X + 424, 492, 200, 20, 2);
         self.controls.strength = self.ctl(
             SLIDER_CLASS, "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_AUTOTICKS, 0,
-            CONTENT_X + 424, 486, 364, 30, C_NL_STRENGTH, 2);
+            CONTENT_X + 424, 514, 364, 30, C_NL_STRENGTH, 2);
         self.controls.strength_label =
-            self.value_label("—", CONTENT_X + 668, 464, 120, 20, 2);
+            self.value_label("—", CONTENT_X + 668, 492, 120, 20, 2);
         SetWindowLongPtrW(self.controls.strength_label, GWLP_USERDATA, 3);
-        self.label("Fade", CONTENT_X + 424, 522, 200, 20, 2);
+        self.label("Fade", CONTENT_X + 424, 550, 200, 20, 2);
         self.controls.fade = self.ctl(
             SLIDER_CLASS, "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_AUTOTICKS, 0,
-            CONTENT_X + 424, 544, 364, 30, C_NL_FADE, 2);
+            CONTENT_X + 424, 572, 364, 30, C_NL_FADE, 2);
         self.controls.fade_label =
-            self.value_label("—", CONTENT_X + 668, 522, 120, 20, 2);
+            self.value_label("—", CONTENT_X + 668, 550, 120, 20, 2);
         SetWindowLongPtrW(self.controls.fade_label, GWLP_USERDATA, 3);
         self.controls.pause =
-            self.button("Pause 1 hour", CONTENT_X + 424, 584, 150, 30, C_NL_PAUSE, false, 2);
+            self.button("Pause 1 hour", CONTENT_X + 424, 612, 150, 30, C_NL_PAUSE, false, 2);
         self.controls.apply =
-            self.button("Apply schedule", CONTENT_X + 586, 584, 202, 30, C_NL_APPLY, true, 2);
+            self.button("Apply schedule", CONTENT_X + 586, 612, 202, 30, C_NL_APPLY, true, 2);
         self.controls.tint_preview = self.ctl(
             "STATIC", "", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0,
-            CONTENT_X + 424, 616, 364, 36, C_NL_PREVIEW, 2);
+            CONTENT_X + 424, 644, 364, 36, C_NL_PREVIEW, 2);
         self.controls.nl_info = self.hint(
-            "Luma applies its own gamma-ramp tint, so fades are seamless and per-display. It does not change the Windows Night light setting. Turn Windows Night light off while Luma tints, otherwise both tints stack.",
+            "Luma applies its own gamma-ramp tint, so fades are seamless and per-display. It does not change the Windows Night light setting. Turn Windows Night light off while Luma tints, otherwise both tints stack.\nTimes follow the time zone you pick; press Use system to follow Windows, including daylight saving.",
             CONTENT_X,
-            676,
-            CONTENT_W,
-            44,
+            528,
+            392,
+            140,
             2,
         );
     }
@@ -1046,25 +1299,28 @@ impl App {
         );
         SendMessageW(self.controls.dim_enable, WM_SETFONT, self.fonts.bold as usize, 1);
 
-        self.card("Daily curve", CONTENT_X, 184, 480, 420, C_DIM_GROUP_A, 3);
-        let rows: [(&str, u16, i32); 6] = [
-            ("Evening starts", C_DIM_EVENING, 224),
-            ("Evening brightness", C_DIM_EVENING_PCT, 266),
-            ("Night starts", C_DIM_NIGHT, 308),
-            ("Night brightness", C_DIM_NIGHT_PCT, 350),
-            ("Back to day at", C_DIM_DAY, 392),
-            ("Fade", C_DIM_FADE, 434),
+        self.card("Daily curve", CONTENT_X, 184, 480, 452, C_DIM_GROUP_A, 3);
+        self.controls.dim_chart = self.ctl(
+            "STATIC", "", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0,
+            CONTENT_X + 16, 216, 448, 132, C_DIM_CHART, 3);
+        let rows: [(&str, u16, i32, &str, i32); 6] = [
+            ("Evening starts", C_DIM_EVENING, 364, "HH:MM", 92),
+            ("Evening level", C_DIM_EVENING_PCT, 400, "%", 92),
+            ("Night starts", C_DIM_NIGHT, 436, "HH:MM", 92),
+            ("Night level", C_DIM_NIGHT_PCT, 472, "%", 92),
+            ("Back to day", C_DIM_DAY, 508, "HH:MM", 92),
+            ("Fade", C_DIM_FADE, 544, "min", 70),
         ];
-        for (text, id, y) in rows {
-            self.label(text, CONTENT_X + 16, y + 3, 180, 20, 3);
+        for (text, id, y, unit, w) in rows {
+            self.label(text, CONTENT_X + 16, y + 3, 160, 20, 3);
             let edit = self.ctl(
                 "RICHEDIT50W",
                 "",
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                 0,
-                CONTENT_X + 210,
+                CONTENT_X + 180,
                 y,
-                if id == C_DIM_FADE { 70 } else { 92 },
+                w,
                 26,
                 id,
                 3,
@@ -1077,48 +1333,46 @@ impl App {
                 C_DIM_NIGHT_PCT => self.controls.dim_night_pct = edit,
                 _ => self.controls.dim_fade = edit,
             }
-            let unit = match id {
-                C_DIM_EVENING | C_DIM_NIGHT | C_DIM_DAY => "HH:MM",
-                C_DIM_FADE => "minutes",
-                _ => "%",
-            };
-            self.hint(unit, CONTENT_X + 310, y + 3, 120, 20, 3);
+            self.hint(unit, CONTENT_X + 280, y + 3, 60, 20, 3);
         }
         self.hint(
-            "Ramps are linear, so brightness changes by a fraction of a percent each minute.\nTimes are local and the day anchor is 'Back to day at'.",
+            "Ramps are linear, so brightness changes by a fraction of a percent each minute.\nTimes are local and the day anchor is 'Back to day'.",
             CONTENT_X + 16,
-            476,
+            578,
             448,
-            60,
+            56,
             3,
         );
 
-        self.card("Right now", CONTENT_X + 496, 184, 308, 364, C_DIM_GROUP_B, 3);
-        self.controls.dim_target = self.value_label("—", CONTENT_X + 512, 224, 276, 48, 3);
+        self.card("Right now", CONTENT_X + 496, 184, 308, 452, C_DIM_GROUP_B, 3);
+        self.controls.dim_gauge = self.ctl(
+            "STATIC", "", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0,
+            CONTENT_X + 512, 224, 276, 10, C_DIM_GAUGE, 3);
+        self.controls.dim_target = self.value_label("—", CONTENT_X + 512, 240, 276, 52, 3);
         SendMessageW(self.controls.dim_target, WM_SETFONT, self.fonts.title as usize, 1);
         SetWindowLongPtrW(self.controls.dim_target, GWLP_USERDATA, 3);
         self.controls.dim_phase =
-            self.label("", CONTENT_X + 512, 280, 276, 44, 3);
+            self.label("", CONTENT_X + 512, 296, 276, 42, 3);
         SendMessageW(self.controls.dim_phase, WM_SETFONT, self.fonts.small as usize, 1);
         SetWindowLongPtrW(self.controls.dim_phase, GWLP_USERDATA, 4);
         self.controls.dim_apply =
-            self.button("Apply now", CONTENT_X + 512, 336, 120, 30, C_DIM_APPLY, true, 3);
+            self.button("Apply now", CONTENT_X + 512, 346, 140, 30, C_DIM_APPLY, true, 3);
         self.controls.dim_status = self.hint(
             "Auto dim writes brightness over DDC/CI. Displays without DDC/CI are skipped.",
-            CONTENT_X + 496,
-            448,
-            308,
-            116,
+            CONTENT_X + 512,
+            392,
+            276,
+            140,
             3,
         );
 
-        self.card("Notes", CONTENT_X, 620, 804, 104, C_DIM_GROUP_C, 3);
+        self.card("Notes", CONTENT_X, 652, 804, 84, C_DIM_GROUP_C, 3);
         self.hint(
             "Manual brightness changes pause auto dim for five minutes, so a slider drag is never fought.\nDaytime is always 100%. Enable auto dim to apply the curve.",
             CONTENT_X + 16,
-            650,
+            686,
             772,
-            60,
+            44,
             3,
         );
     }
@@ -1229,6 +1483,16 @@ impl App {
                 self.paint_card(d.hDC, &rc, &title);
             }
             C_NL_PREVIEW => self.paint_tint_preview(d.hDC, &rc),
+            C_DIM_CHART => self.paint_dim_chart(d.hDC, d.hwndItem),
+            C_DIM_GAUGE => self.paint_dim_gauge(d.hDC, d.hwndItem),
+            C_MON_LIST => self.paint_list_item(d.hDC, &rc, d.itemID as i32, d.itemState),
+            C_VCP_COMBO | C_VCP_ENUM | C_NL_MODE | C_NL_LOCATION | C_NL_TZ => {
+                // Dropdown rows are drawn for the list window, whose items only
+                // the combo box itself can hand out.
+                let combo = GetDlgItem(self.hwnd, d.CtlID as i32);
+                let src = if combo.is_null() { d.hwndItem } else { combo };
+                self.paint_combo_item(d.hDC, &rc, src, d.itemID as i32, d.itemState)
+            }
             C_NL_ENABLE | C_NL_WEEKEND | C_DIM_ENABLE | C_AUTOSTART | C_MINIMIZE
             | C_DARK_MODE => {
                 self.paint_checkbox(d.hDC, &rc, d.hwndItem, d.itemState, d.CtlID as u16)
@@ -1237,7 +1501,7 @@ impl App {
                 self.paint_primary(d.hDC, &rc, d.hwndItem, d.itemState)
             }
             C_MON_REFRESH | C_VCP_READ | C_VCP_USE | C_NL_RESET_TINT | C_NL_PAUSE
-            | C_OPEN_FOLDER | C_RESET => {
+            | C_NL_USE_TZ | C_OPEN_FOLDER | C_RESET => {
                 self.paint_secondary(d.hDC, &rc, d.hwndItem, d.itemState)
             }
             _ => {}
@@ -1309,11 +1573,7 @@ impl App {
             &mut text,
             self.fonts.bold,
             if active {
-                if DARK_MODE.load(Ordering::Relaxed) {
-                    pal().accent
-                } else {
-                    pal().accent_dark
-                }
+                self.accent_text()
             } else {
                 pal().text
             },
@@ -1332,6 +1592,270 @@ impl App {
             pal().text,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
+    }
+
+    /// Accent ink that stays legible on the soft accent fill: the dark theme
+    /// accent is light enough for text, the light theme one is not.
+    fn accent_text(&self) -> u32 {
+        if DARK_MODE.load(Ordering::Relaxed) {
+            pal().accent
+        } else {
+            pal().accent_dark
+        }
+    }
+
+    unsafe fn combo_item_text(hwnd: HWND, id: i32) -> String {
+        if id < 0 {
+            return String::new();
+        }
+        let mut buf = [0u16; 256];
+        let n = SendMessageW(hwnd, CB_GETLBTEXT, id as usize, buf.as_mut_ptr() as isize);
+        if n <= 0 {
+            return String::new();
+        }
+        from_wide(&buf[..n as usize])
+    }
+
+    unsafe fn list_item_text(hwnd: HWND, id: i32) -> String {
+        if id < 0 {
+            return String::new();
+        }
+        let mut buf = [0u16; 256];
+        let n = SendMessageW(hwnd, LB_GETTEXT, id as usize, buf.as_mut_ptr() as isize);
+        if n <= 0 {
+            return String::new();
+        }
+        from_wide(&buf[..n as usize])
+    }
+
+    unsafe fn paint_combo_item(
+        &self,
+        hdc: HDC,
+        rc: &RECT,
+        hwnd: HWND,
+        item_id: i32,
+        state: u32,
+    ) {
+        let face = state & ODS_COMBOBOXEDIT != 0;
+        let selected = state & ODS_SELECTED != 0;
+        if face {
+            round_fill(hdc, rc, 6, pal().well, pal().border);
+        } else {
+            fill_color(hdc, rc, if selected { pal().accent_soft } else { pal().well });
+        }
+        let text = Self::combo_item_text(hwnd, item_id);
+        let ink = if selected && !face {
+            self.accent_text()
+        } else {
+            pal().text
+        };
+        let mut t = RECT {
+            left: rc.left + 10,
+            top: rc.top,
+            right: if face { rc.right - 30 } else { rc.right - 6 },
+            bottom: rc.bottom,
+        };
+        draw_text(
+            hdc,
+            &text,
+            &mut t,
+            self.fonts.base,
+            ink,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+        );
+    }
+
+    unsafe fn paint_list_item(&self, hdc: HDC, rc: &RECT, item_id: i32, state: u32) {
+        let selected = state & ODS_SELECTED != 0;
+        fill_color(hdc, rc, if selected { pal().accent_soft } else { pal().well });
+        let text = match self.mon_labels.get(item_id.max(0) as usize) {
+            Some(t) => t.as_str(),
+            None => "",
+        };
+        let mut t = RECT {
+            left: rc.left + 10,
+            top: rc.top,
+            right: rc.right - 6,
+            bottom: rc.bottom,
+        };
+        draw_text(
+            hdc,
+            text,
+            &mut t,
+            self.fonts.base,
+            if selected { self.accent_text() } else { pal().text },
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+        );
+    }
+
+    /// 24 hour preview of the auto-dim curve, with a marker for the current
+    /// local time and hour ticks along the bottom.
+    unsafe fn paint_dim_chart(&self, hdc_out: HDC, hwnd: HWND) {
+        const SRCCOPY: u32 = 0x00CC_0020;
+        let mut rc: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rc);
+        let cw = rc.right - rc.left;
+        let ch = rc.bottom - rc.top;
+        if cw <= 0 || ch <= 0 {
+            return;
+        }
+        // Draw offscreen so a clipped WM_DRAWITEM DC cannot erase what is
+        // already on screen; the blit only touches the damaged part.
+        let mem = CreateCompatibleDC(hdc_out);
+        let bmp = CreateCompatibleBitmap(hdc_out, cw, ch);
+        let old = SelectObject(mem, bmp);
+        let hdc = mem;
+        fill_color(hdc, &rc, pal().card);
+        let body = RECT {
+            left: rc.left,
+            top: rc.top,
+            right: rc.right,
+            bottom: rc.bottom,
+        };
+        round_fill(hdc, &body, 10, pal().well, pal().border);
+        let plot = RECT {
+            left: rc.left + 10,
+            top: rc.top + 12,
+            right: rc.right - 10,
+            bottom: rc.bottom - 22,
+        };
+        let w = (plot.right - plot.left).max(1);
+        let h = (plot.bottom - plot.top).max(1);
+        let curve = self.dim_curve();
+        if !dim::valid(&curve) {
+            let mut msg = RECT {
+                left: rc.left + 10,
+                top: plot.top,
+                right: rc.right - 10,
+                bottom: plot.bottom,
+            };
+            draw_text(
+                hdc,
+                "Fix the times below to see the curve.",
+                &mut msg,
+                self.fonts.small,
+                pal().muted,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+            BitBlt(hdc_out, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            return;
+        }
+        for q in 1..4 {
+            let y = plot.top + h * q / 4;
+            let line = RECT {
+                left: plot.left,
+                top: y,
+                right: plot.right,
+                bottom: y + 1,
+            };
+            fill_color(hdc, &line, pal().border);
+        }
+        let mut prev_y = -1;
+        for i in 0..w {
+            let minute = (i as i64 * 1439 / w as i64) as u16;
+            let pct = dim::target(&curve, minute) as i32;
+            let y = plot.bottom - (h * pct / 100).clamp(1, h);
+            let bar = RECT {
+                left: plot.left + i,
+                top: y,
+                right: plot.left + i + 1,
+                bottom: plot.bottom,
+            };
+            fill_color(hdc, &bar, pal().accent_soft);
+            // Join each cap to the previous one so steep fades stay a line
+            // instead of breaking into dashes.
+            let (top, bottom) = if prev_y < 0 {
+                (y, y + 2)
+            } else {
+                (prev_y.min(y), prev_y.max(y) + 2)
+            };
+            let cap = RECT {
+                left: plot.left + i,
+                top,
+                right: plot.left + i + 1,
+                bottom,
+            };
+            fill_color(hdc, &cap, pal().accent);
+            prev_y = y;
+        }
+        let now = local_minute();
+        let x = plot.left + (w as i64 * now as i64 / 1439) as i32;
+        let marker = RECT {
+            left: x,
+            top: plot.top,
+            right: x + 2,
+            bottom: plot.bottom,
+        };
+        fill_color(hdc, &marker, pal().text);
+        for hour in 0..5 {
+            let hx = plot.left + w * hour / 4;
+            let tick = RECT {
+                left: hx,
+                top: plot.bottom,
+                right: hx + 1,
+                bottom: plot.bottom + 4,
+            };
+            fill_color(hdc, &tick, pal().border);
+            let mut label = RECT {
+                left: hx - 20,
+                top: plot.bottom + 4,
+                right: hx + 20,
+                bottom: plot.bottom + 20,
+            };
+            draw_text(
+                hdc,
+                &format!("{:02}:00", hour * 6),
+                &mut label,
+                self.fonts.small,
+                pal().muted,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
+        BitBlt(hdc_out, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+    }
+
+    /// Horizontal fill showing the current brightness target.
+    unsafe fn paint_dim_gauge(&self, hdc_out: HDC, hwnd: HWND) {
+        const SRCCOPY: u32 = 0x00CC_0020;
+        let mut rc: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rc);
+        let cw = rc.right - rc.left;
+        let ch = rc.bottom - rc.top;
+        if cw <= 0 || ch <= 0 {
+            return;
+        }
+        let mem = CreateCompatibleDC(hdc_out);
+        let bmp = CreateCompatibleBitmap(hdc_out, cw, ch);
+        let old = SelectObject(mem, bmp);
+        let hdc = mem;
+        fill_color(hdc, &rc, pal().card);
+        round_fill(hdc, &rc, 5, pal().well, pal().border);
+        let curve = self.dim_curve();
+        let pct = if dim::valid(&curve) {
+            dim::target(&curve, local_minute()) as i32
+        } else {
+            0
+        };
+        let w = cw * pct / 100;
+        if w > 0 {
+            let fill = RECT {
+                left: rc.left,
+                top: rc.top,
+                right: rc.left + w,
+                bottom: rc.bottom,
+            };
+            round_fill(hdc, &fill, 5, pal().accent, pal().accent);
+        }
+        BitBlt(hdc_out, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
     }
 
     unsafe fn paint_tint_preview(&self, hdc: HDC, rc: &RECT) {
@@ -1363,12 +1887,19 @@ impl App {
             "Before",
             &mut ltext,
             self.fonts.small,
-            pal().muted,
+            rgb(0x2C, 0x31, 0x3A),
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
         let luminance =
             (299 * red as u32 + 587 * green as u32 + 114 * blue as u32) / 1000;
-        let ink = if luminance > 150 { pal().text } else { COL_WHITE };
+        // The chip is a fixed preview colour, so its ink must be fixed too:
+        // pal().text flips to near-white in dark mode, which disappears on a
+        // pale tint. Always pair a pale chip with dark ink.
+        let ink = if luminance > 140 {
+            rgb(0x2C, 0x31, 0x3A)
+        } else {
+            COL_WHITE
+        };
         let mut rtext = right;
         let label = format!("{} K · {}%", self.settings.temp, self.settings.strength);
         draw_text(
@@ -1399,7 +1930,7 @@ impl App {
             &text,
             &mut t,
             self.fonts.bold,
-            if disabled { pal().disabled_text } else { COL_WHITE },
+            if disabled { pal().disabled_text } else { pal().accent_ink },
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
         if state & ODS_FOCUS != 0 && !disabled {
@@ -1413,7 +1944,7 @@ impl App {
                 &text,
                 &mut t2,
                 self.fonts.bold,
-                if disabled { pal().disabled_text } else { COL_WHITE },
+                if disabled { pal().disabled_text } else { pal().accent_ink },
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE,
             );
         }
@@ -1424,7 +1955,7 @@ impl App {
         let fill = if pressed {
             pal().accent_soft
         } else {
-            pal().card
+            pal().well
         };
         round_fill(hdc, rc, 8, fill, pal().border);
         let text = hwnd_text(hwnd);
@@ -1482,7 +2013,7 @@ impl App {
                 "\u{2713}",
                 &mut g,
                 self.fonts.small,
-                COL_WHITE,
+                pal().accent_ink,
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE,
             );
         }
@@ -1572,7 +2103,11 @@ impl App {
         );
         set_text(self.controls.lat, &format!("{:.4}", s.lat));
         set_text(self.controls.lon, &format!("{:.4}", s.lon));
-        set_text(self.controls.tz, &fmt_tz(s.tz));
+        set_combo_selection(self.controls.tz, tz_selection(s.tz));
+        set_combo_selection(
+            self.controls.nl_location,
+            city_selection(s.lat, s.lon).unwrap_or(CITIES.len()),
+        );
         set_text(self.controls.wd_start, &s.wd_start);
         set_text(self.controls.wd_end, &s.wd_end);
         set_text(self.controls.we_start, &s.we_start);
@@ -1793,6 +2328,22 @@ impl App {
         }
     }
 
+    /// Store a solar location and mirror it into the Night light controls.
+    unsafe fn set_solar_location(&mut self, lat: f64, lon: f64, tz: f64) {
+        self.settings.lat = lat;
+        self.settings.lon = lon;
+        self.settings.tz = tz;
+        set_text(self.controls.lat, &format!("{:.4}", lat));
+        set_text(self.controls.lon, &format!("{:.4}", lon));
+        set_combo_selection(self.controls.tz, tz_selection(tz));
+        set_combo_selection(
+            self.controls.nl_location,
+            city_selection(lat, lon).unwrap_or(CITIES.len()),
+        );
+        self.mark_dirty();
+        self.refresh_night_now();
+    }
+
     unsafe fn refresh_night_now(&mut self) {
         let now = night::now_info();
         let info = night::compute(&self.settings, now, now_epoch());
@@ -1886,8 +2437,10 @@ impl App {
         self.settings.selected = self.selected;
 
         SendMessageW(self.controls.list, LB_RESETCONTENT, 0, 0);
+        self.mon_labels.clear();
         for d in &self.displays {
             let w = wide(&d.label());
+            self.mon_labels.push(d.label());
             SendMessageW(self.controls.list, LB_ADDSTRING, 0, w.as_ptr() as isize);
         }
         if !self.displays.is_empty() {
@@ -2192,6 +2745,11 @@ impl App {
         self.apply_night(&info);
         self.update_night_labels(&info, local);
         self.refresh_dim_labels();
+        if self.page == 2 {
+            // The curve marker and the gauge follow the local clock.
+            InvalidateRect(self.controls.dim_chart, std::ptr::null(), 0);
+            InvalidateRect(self.controls.dim_gauge, std::ptr::null(), 0);
+        }
         if self.settings.auto_dim {
             let curve = self.dim_curve();
             if dim::valid(&curve) {
@@ -2397,6 +2955,40 @@ impl App {
                 self.mark_dirty();
                 self.refresh_night_now();
             }
+            C_NL_LOCATION => {
+                let sel = combo_selection(self.controls.nl_location);
+                match CITIES.get(sel) {
+                    Some((name, lat, lon, tz)) => {
+                        self.set_solar_location(*lat, *lon, *tz);
+                        self.set_footer(&format!(
+                            "Location set to {}. Sunrise and sunset follow these coordinates.",
+                            name
+                        ));
+                    }
+                    None => {
+                        SetFocus(self.controls.lat);
+                        self.set_footer(
+                            "Custom coordinates: type a latitude and longitude, then press Apply schedule.",
+                        );
+                    }
+                }
+            }
+            C_NL_TZ => {
+                let tz = TZ_MIN + combo_selection(self.controls.tz) as f64 * 0.5;
+                self.set_solar_location(self.settings.lat, self.settings.lon, tz);
+                self.set_footer(&format!(
+                    "Time zone set to {}. Schedule and solar times are local.",
+                    tz_label(tz)
+                ));
+            }
+            C_NL_USE_TZ => {
+                let tz = (current_tz_offset_minutes() as f64 / 60.0 * 2.0).round() / 2.0;
+                self.set_solar_location(self.settings.lat, self.settings.lon, tz);
+                self.set_footer(&format!(
+                    "Time zone now follows Windows: {}.",
+                    tz_label(tz)
+                ));
+            }
             C_NL_WEEKEND => {
                 self.settings.weekend = !self.settings.weekend;
                 InvalidateRect(self.controls.weekend, std::ptr::null(), 1);
@@ -2508,7 +3100,6 @@ impl App {
     unsafe fn apply_schedule_edits(&mut self) {
         let lat_s = hwnd_text(self.controls.lat);
         let lon_s = hwnd_text(self.controls.lon);
-        let tz_s = hwnd_text(self.controls.tz);
         let lat: f64 = match lat_s.trim().parse() {
             Ok(v) if (-90.0..=90.0).contains(&v) => v,
             _ => return self.schedule_error("Latitude must be between -90 and 90."),
@@ -2517,10 +3108,7 @@ impl App {
             Ok(v) if (-180.0..=180.0).contains(&v) => v,
             _ => return self.schedule_error("Longitude must be between -180 and 180."),
         };
-        let tz: f64 = match tz_s.trim().replace(',', ".").parse() {
-            Ok(v) if (-14.0..=14.0).contains(&v) => v,
-            _ => return self.schedule_error("UTC offset must be between -14 and 14."),
-        };
+        let tz = TZ_MIN + combo_selection(self.controls.tz) as f64 * 0.5;
         let wd_start = normalize_or_error(hwnd_text(self.controls.wd_start));
         let wd_end = normalize_or_error(hwnd_text(self.controls.wd_end));
         let we_start = normalize_or_error(hwnd_text(self.controls.we_start));
@@ -2536,6 +3124,10 @@ impl App {
         self.settings.lat = lat;
         self.settings.lon = lon;
         self.settings.tz = tz;
+        set_combo_selection(
+            self.controls.nl_location,
+            city_selection(lat, lon).unwrap_or(CITIES.len()),
+        );
         self.settings.wd_start = wd_start;
         self.settings.wd_end = wd_end;
         self.settings.we_start = we_start;
@@ -3208,21 +3800,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         }
         WM_CTLCOLOREDIT => {
             let hdc = w as HDC;
-            // Native edit faces stay light in dark mode on this build; keep
-            // text and selection readable and avoid leaking brushes per paint.
             SetBkMode(hdc, 2);
-            SetBkColor(hdc, 0x00FFFFFF);
-            SetTextColor(hdc, 0x00332620);
+            SetBkColor(hdc, pal().well);
+            SetTextColor(hdc, pal().text);
+            let app = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+            if !app.is_null() && !(*app).br_well.is_null() {
+                return (*app).br_well as LRESULT;
+            }
             return GetStockObject(WHITE_BRUSH) as LRESULT;
         }
         WM_CTLCOLORLISTBOX => {
             let hdc = w as HDC;
             SetBkMode(hdc, 2);
-            SetBkColor(hdc, pal().card);
+            SetBkColor(hdc, pal().well);
             SetTextColor(hdc, pal().text);
             let app = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
-            if !app.is_null() {
-                return (*app).br_card as LRESULT;
+            if !app.is_null() && !(*app).br_well.is_null() {
+                return (*app).br_well as LRESULT;
             }
         }
         WM_CTLCOLORSTATIC => {
@@ -3239,11 +3833,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             // WM_CTLCOLOREDIT. They still need an opaque field background.
             if class == "Edit" || class == "ComboBox" || class == "ListBox" {
                 SetBkMode(hdc, 2);
-                SetBkColor(hdc, pal().card);
+                SetBkColor(hdc, pal().well);
                 SetTextColor(hdc, pal().text);
                 let app = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
-                if !app.is_null() {
-                    return (*app).br_card as LRESULT;
+                if !app.is_null() && !(*app).br_well.is_null() {
+                    return (*app).br_well as LRESULT;
                 }
                 return GetStockObject(WHITE_BRUSH) as LRESULT;
             }
