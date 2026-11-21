@@ -1,0 +1,14 @@
+# Build output
+/target/
+
+# Development scratch: screenshots, logs, probes, test profiles
+/temp/
+/testappdata/
+
+# Local release packaging (publish binaries via GitHub Releases instead)
+/dist/
+/release/
+
+# Logs and diagnostics
+*.log
+/diag*.txt

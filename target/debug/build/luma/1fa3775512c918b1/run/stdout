@@ -1,5 +1,0 @@
-cargo:rerun-if-changed=luma.rc
-cargo:rerun-if-changed=luma.manifest
-cargo:rerun-if-changed=luma.ico
-cargo:rustc-link-arg=/MANIFEST:NO
-cargo:rustc-link-arg=F:\Deepseek\Research\luma\target\debug\build\luma/1fa3775512c918b1\out\luma.res

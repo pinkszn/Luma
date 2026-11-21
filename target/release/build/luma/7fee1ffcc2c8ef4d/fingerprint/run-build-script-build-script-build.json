@@ -1,1 +1,0 @@
-{"rustc":11991369547787020153,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[7420952262957199490,"build_script_build",false,5784730993548153950]],"local":[{"RerunIfChanged":{"output":"release\\build\\luma/7fee1ffcc2c8ef4d\\run\\stdout","paths":["luma.rc","luma.manifest","luma.ico"]}}],"rustflags":[],"config":0,"compile_kind":0}
