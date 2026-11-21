@@ -34,11 +34,14 @@ pub struct NightInfo {
     pub solar_ok: bool,
 }
 
+fn is_leap(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
 fn day_of_year(y: i32, m: u32, d: u32) -> u32 {
     const CUM: [u32; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let mut doy = CUM[(m - 1) as usize] + d;
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    if leap && m > 2 {
+    if is_leap(y) && m > 2 {
         doy += 1;
     }
     doy
@@ -46,9 +49,12 @@ fn day_of_year(y: i32, m: u32, d: u32) -> u32 {
 
 /// Returns (sunrise, sunset) in local minutes for the given date.
 pub fn solar_times(lat: f64, lon: f64, tz: f64, year: i32, month: u32, day: u32) -> Option<(f64, f64)> {
+    let days = if is_leap(year) { 366.0 } else { 365.0 };
     let doy = day_of_year(year, month, day) as f64;
-    let decl = 23.44_f64.to_radians() * (2.0 * std::f64::consts::PI * (284.0 + doy) / 365.0).sin();
-    let b = (2.0 * std::f64::consts::PI * (doy - 81.0) / 365.0).to_radians();
+    let decl = 23.44_f64.to_radians() * (2.0 * std::f64::consts::PI * (284.0 + doy) / days).sin();
+    // B is already an angle in radians; converting it again made the equation
+    // of time ~57x too small and shifted sunrise/sunset by up to ~20 minutes.
+    let b = 2.0 * std::f64::consts::PI * (doy - 81.0) / days;
     let eot = 9.87 * (2.0 * b).sin() - 7.53 * b.cos() - 1.5 * b.sin(); // minutes
     let solar_noon = 720.0 - 4.0 * lon - eot + tz * 60.0;
     let lat_r = lat.to_radians();
@@ -308,8 +314,10 @@ mod tests {
     #[test]
     fn manila_solar_sane() {
         let (rise, set) = solar_times(14.676, 121.0437, 8.0, 2026, 11, 21).unwrap();
-        assert!(rise > 5.0 * 60.0 && rise < 7.0 * 60.0, "sunrise {rise}");
-        assert!(set > 17.0 * 60.0 && set < 18.5 * 60.0, "sunset {set}");
+        // Actual times are ~06:01 and ~17:24. The tight bounds keep the equation
+        // of time honest; the old double-radians bug added ~20 minutes.
+        assert!(rise > 5.9 * 60.0 && rise < 6.2 * 60.0, "sunrise {rise}");
+        assert!(set > 17.2 * 60.0 && set < 17.6 * 60.0, "sunset {set}");
     }
 
     #[test]

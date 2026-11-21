@@ -18,11 +18,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Luma"
             VALUE "FileDescription", "Luma - monitor control and night light"
-            VALUE "FileVersion", "0.4.4.0"
+            VALUE "FileVersion", "0.4.5.0"
             VALUE "InternalName", "luma"
             VALUE "OriginalFilename", "Luma.exe"
             VALUE "ProductName", "Luma"
-            VALUE "ProductVersion", "0.4.4.0"
+            VALUE "ProductVersion", "0.4.5.0"
         END
     END
     BLOCK "VarFileInfo"

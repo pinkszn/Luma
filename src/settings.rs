@@ -209,7 +209,13 @@ impl Settings {
             self.dim_night_pct,
             self.dim_fade,
         );
-        let _ = fs::write(config_path(), text);
+        // Write beside the real file and rename, so a crash mid-write cannot
+        // leave a truncated settings.ini behind.
+        let path = config_path();
+        let tmp = path.with_extension("ini.tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &path);
+        }
     }
 }
 

@@ -1498,7 +1498,7 @@ impl App {
 
         self.card("About", CONTENT_X + 516, 176, 288, 336, C_ABOUT_GROUP, 4);
         self.controls.about = self.label(
-            "Luma 0.4.4\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
+            "Luma 0.4.5\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
             CONTENT_X + 532,
             216,
             256,
@@ -1590,7 +1590,7 @@ impl App {
         let mut ver = RECT { left: CLIENT_W - 120, top: 34, right: CLIENT_W - 28, bottom: 56 };
         draw_text(
             hdc,
-            "v0.4.4",
+            "v0.4.5",
             &mut ver,
             self.fonts.base,
             pal().header_sub,
@@ -2948,7 +2948,8 @@ impl App {
         ));
     }
 
-    unsafe fn remove_tray(&mut self) {        if self.tray {
+    unsafe fn remove_tray(&mut self) {
+        if self.tray {
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
             nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
             nid.hWnd = self.hwnd;
@@ -3271,14 +3272,11 @@ impl App {
                 InvalidateRect(self.controls.dark_mode, std::ptr::null(), 1);
                 self.apply_theme();
                 self.mark_dirty();
-                set_text(
-                    self.controls.footer,
-                    if self.settings.dark {
-                        "Dark theme enabled."
-                    } else {
-                        "Light theme enabled."
-                    },
-                );
+                self.set_footer(if self.settings.dark {
+                    "Dark theme enabled."
+                } else {
+                    "Light theme enabled."
+                });
             }
             C_EXIT => {
                 DestroyWindow(self.hwnd);
@@ -3443,6 +3441,12 @@ impl App {
         }
         if !self.br_card.is_null() {
             DeleteObject(self.br_card as HANDLE);
+        }
+        if !self.br_well.is_null() {
+            DeleteObject(self.br_well as HANDLE);
+        }
+        if !self.icon.is_null() {
+            DestroyIcon(self.icon);
         }
         if !self.mutex.is_null() {
             CloseHandle(self.mutex);
@@ -4457,5 +4461,3 @@ fn main() {
         std::process::exit(code);
     }
 }
-
-
