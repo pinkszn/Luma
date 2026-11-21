@@ -29,6 +29,7 @@ pub struct Settings {
     pub dim_day: String,
     pub dim_evening: String,
     pub dim_night: String,
+    pub dim_day_pct: u32,
     pub dim_evening_pct: u32,
     pub dim_night_pct: u32,
     pub dim_fade: u32,
@@ -69,6 +70,7 @@ impl Default for Settings {
             dim_day: "07:00".into(),
             dim_evening: "21:00".into(),
             dim_night: "23:00".into(),
+            dim_day_pct: 100,
             dim_evening_pct: 75,
             dim_night_pct: 35,
             dim_fade: 20,
@@ -148,6 +150,9 @@ impl Settings {
                     s.dim_evening = normalize_time(v).unwrap_or(s.dim_evening.clone())
                 }
                 "dim_night" => s.dim_night = normalize_time(v).unwrap_or(s.dim_night.clone()),
+                "dim_day_pct" => {
+                    s.dim_day_pct = v.parse().unwrap_or(s.dim_day_pct).clamp(1, 100)
+                }
                 "dim_evening_pct" => {
                     s.dim_evening_pct = v.parse().unwrap_or(s.dim_evening_pct).clamp(1, 100)
                 }
@@ -173,7 +178,7 @@ impl Settings {
              sunset_offset={}\nsunrise_offset={}\n\
              minimize_tray={}\nautostart={}\ndark={}\nselected={}\npaused_until={}\n\
              auto_dim={}\ndim_day={}\ndim_evening={}\ndim_night={}\n\
-             dim_evening_pct={}\ndim_night_pct={}\ndim_fade={}\n",
+             dim_day_pct={}\ndim_evening_pct={}\ndim_night_pct={}\ndim_fade={}\n",
             SETTINGS_SCHEMA,
             self.enabled as u8,
             self.mode,
@@ -199,6 +204,7 @@ impl Settings {
             self.dim_day,
             self.dim_evening,
             self.dim_night,
+            self.dim_day_pct,
             self.dim_evening_pct,
             self.dim_night_pct,
             self.dim_fade,

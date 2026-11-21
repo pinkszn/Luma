@@ -1,16 +1,17 @@
 //! Time-of-day brightness curve.
 //!
 //! The curve is anchored at `day` (the moment the day starts). Brightness is
-//! 100% during the day, ramps down to `evening_pct` at `evening`, holds until
-//! `night`, ramps to `night_pct`, holds overnight, then ramps back to 100% at
-//! `day` over `fade` minutes. Every ramp is linear, so the display changes by a
-//! fraction of a percent per tick instead of jumping.
+//! `day_pct` during the day, ramps down to `evening_pct` at `evening`, holds
+//! until `night`, ramps to `night_pct`, holds overnight, then ramps back to
+//! `day_pct` at `day` over `fade` minutes. Every ramp is linear, so the display
+//! changes by a fraction of a percent per tick instead of jumping.
 
 #[derive(Clone, Copy, Debug)]
 pub struct Curve {
     pub day: u16,
     pub evening: u16,
     pub night: u16,
+    pub day_pct: u8,
     pub evening_pct: u8,
     pub night_pct: u8,
     pub fade: u16,
@@ -22,6 +23,7 @@ impl Default for Curve {
             day: 7 * 60,
             evening: 21 * 60,
             night: 23 * 60,
+            day_pct: 100,
             evening_pct: 75,
             night_pct: 35,
             fade: 20,
@@ -37,7 +39,7 @@ pub const PHASE_MORNING: &str = "morning";
 /// True when the three anchors are ordered and the percentages are sane.
 /// Without ordering there is no meaningful day/evening/night split.
 pub fn valid(c: &Curve) -> bool {
-    c.day < c.evening && c.evening < c.night && c.evening_pct >= c.night_pct
+    c.day < c.evening && c.evening < c.night && c.day_pct >= c.evening_pct && c.evening_pct >= c.night_pct
 }
 
 /// Brightness target in percent for a local time expressed in minutes.
@@ -53,18 +55,19 @@ pub fn target_phase(c: &Curve, minute: u16) -> (u8, &'static str) {
     let night = (c.night + 1440 - day) % 1440;
     let m = (minute % 1440 + 1440 - day) % 1440;
     let fade = c.fade.max(1).min(720) as u32;
-    let evening_pct = c.evening_pct.min(100) as f32;
+    let day_pct = c.day_pct.min(100) as f32;
+    let evening_pct = c.evening_pct.min(c.day_pct).min(100) as f32;
     let night_pct = c.night_pct.min(c.evening_pct).min(100) as f32;
 
     if m < evening {
         if (m as u32) < fade {
             let t = m as f32 / fade as f32;
-            return (lerp(night_pct, 100.0, t), PHASE_MORNING);
+            return (lerp(night_pct, day_pct, t), PHASE_MORNING);
         }
-        (100, PHASE_DAY)
+        (c.day_pct.min(100), PHASE_DAY)
     } else if m < night {
         let t = ((m - evening) as f32 / fade as f32).min(1.0);
-        (lerp(100.0, evening_pct, t), PHASE_EVENING)
+        (lerp(day_pct, evening_pct, t), PHASE_EVENING)
     } else {
         let t = ((m - night) as f32 / fade as f32).min(1.0);
         (lerp(evening_pct, night_pct, t), PHASE_NIGHT)
@@ -139,6 +142,27 @@ mod tests {
     fn wrap_around_midnight_is_stable() {
         let c = curve();
         assert_eq!(target(&c, 0), target(&c, 24 * 60));
+    }
+
+    #[test]
+    fn day_level_is_configurable() {
+        let mut c = curve();
+        c.day_pct = 80;
+        c.evening_pct = 60;
+        c.night_pct = 30;
+        assert!(valid(&c));
+        assert_eq!(target(&c, 12 * 60), 80);
+        assert_eq!(target(&c, 20 * 60), 80);
+        assert_eq!(target(&c, 22 * 60), 60);
+        assert_eq!(target(&c, 2 * 60), 30);
+        assert_eq!(target(&c, 8 * 60), 80);
+    }
+
+    #[test]
+    fn day_level_below_evening_is_invalid() {
+        let mut c = curve();
+        c.day_pct = 50;
+        assert!(!valid(&c));
     }
 
     #[test]

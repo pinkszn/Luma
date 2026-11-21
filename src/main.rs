@@ -17,7 +17,7 @@ use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::time::Duration;
 
 const CLASS_NAME: &str = "LumaMainWindow";
@@ -90,6 +90,9 @@ pub const DARK_PALETTE: Palette = Palette {
 static DARK_MODE: AtomicBool = AtomicBool::new(false);
 static VCP_EDIT_OLD_PROC: AtomicIsize = AtomicIsize::new(0);
 static COMBO_OLD_PROC: AtomicIsize = AtomicIsize::new(0);
+// Explorer broadcasts this when the taskbar restarts; the tray icon must be
+// added again or Luma stays hidden with no way back.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
 unsafe extern "system" fn vcp_edit_subclass(
     hwnd: HWND,
@@ -388,6 +391,7 @@ const C_DIM_GROUP_C: u16 = 413;
 const C_DIM_STATUS: u16 = 414;
 const C_DIM_CHART: u16 = 415;
 const C_DIM_GAUGE: u16 = 416;
+const C_DIM_DAY_PCT: u16 = 417;
 
 const C_FOOTER: u16 = 901;
 
@@ -471,6 +475,7 @@ struct Controls {
     dim_evening: HWND,
     dim_night: HWND,
     dim_day: HWND,
+    dim_day_pct: HWND,
     dim_evening_pct: HWND,
     dim_night_pct: HWND,
     dim_fade: HWND,
@@ -595,6 +600,7 @@ impl App {
 
     unsafe fn on_create(&mut self, hwnd: HWND) {
         self.hwnd = hwnd;
+        self.log_tray("on_create begin");
         self.hinst = GetModuleHandleW(std::ptr::null());
         set_dark_mode(self.settings.dark);
         self.br_bg = CreateSolidBrush(pal().bg);
@@ -619,11 +625,14 @@ impl App {
         self.set_page(0);
 
         self.populate_settings_ui();
+
+        // Register the tray icon before the blocking DDC/CI monitor scan so
+        // it appears immediately instead of ~41 s after startup.
+        self.add_tray();
+
         self.refresh_monitors();
         self.restyle_edits();
         self.refresh_night_now();
-
-        self.add_tray();
         RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_ALT, VK_N);
         RegisterHotKey(hwnd, 2, MOD_CONTROL | MOD_ALT, VK_UP);
         RegisterHotKey(hwnd, 3, MOD_CONTROL | MOD_ALT, VK_DOWN);
@@ -1302,14 +1311,15 @@ impl App {
         self.card("Daily curve", CONTENT_X, 184, 480, 452, C_DIM_GROUP_A, 3);
         self.controls.dim_chart = self.ctl(
             "STATIC", "", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0,
-            CONTENT_X + 16, 216, 448, 132, C_DIM_CHART, 3);
-        let rows: [(&str, u16, i32, &str, i32); 6] = [
-            ("Evening starts", C_DIM_EVENING, 364, "HH:MM", 92),
-            ("Evening level", C_DIM_EVENING_PCT, 400, "%", 92),
-            ("Night starts", C_DIM_NIGHT, 436, "HH:MM", 92),
-            ("Night level", C_DIM_NIGHT_PCT, 472, "%", 92),
-            ("Back to day", C_DIM_DAY, 508, "HH:MM", 92),
-            ("Fade", C_DIM_FADE, 544, "min", 70),
+            CONTENT_X + 16, 216, 448, 128, C_DIM_CHART, 3);
+        let rows: [(&str, u16, i32, &str, i32); 7] = [
+            ("Evening starts", C_DIM_EVENING, 348, "HH:MM", 92),
+            ("Evening level", C_DIM_EVENING_PCT, 380, "%", 92),
+            ("Night starts", C_DIM_NIGHT, 412, "HH:MM", 92),
+            ("Night level", C_DIM_NIGHT_PCT, 444, "%", 92),
+            ("Back to day", C_DIM_DAY, 476, "HH:MM", 92),
+            ("Day level", C_DIM_DAY_PCT, 508, "%", 92),
+            ("Fade", C_DIM_FADE, 540, "min", 70),
         ];
         for (text, id, y, unit, w) in rows {
             self.label(text, CONTENT_X + 16, y + 3, 160, 20, 3);
@@ -1329,6 +1339,7 @@ impl App {
                 C_DIM_EVENING => self.controls.dim_evening = edit,
                 C_DIM_NIGHT => self.controls.dim_night = edit,
                 C_DIM_DAY => self.controls.dim_day = edit,
+                C_DIM_DAY_PCT => self.controls.dim_day_pct = edit,
                 C_DIM_EVENING_PCT => self.controls.dim_evening_pct = edit,
                 C_DIM_NIGHT_PCT => self.controls.dim_night_pct = edit,
                 _ => self.controls.dim_fade = edit,
@@ -1368,7 +1379,7 @@ impl App {
 
         self.card("Notes", CONTENT_X, 652, 804, 84, C_DIM_GROUP_C, 3);
         self.hint(
-            "Manual brightness changes pause auto dim for five minutes, so a slider drag is never fought.\nDaytime is always 100%. Enable auto dim to apply the curve.",
+            "Manual brightness changes pause auto dim for five minutes, so a slider drag is never fought.\nDaytime brightness is the day level. Enable auto dim to apply the curve.",
             CONTENT_X + 16,
             686,
             772,
@@ -1437,7 +1448,7 @@ impl App {
 
         self.card("About", CONTENT_X + 516, 176, 288, 336, C_ABOUT_GROUP, 4);
         self.controls.about = self.label(
-            "Luma 0.4.2\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
+            "Luma 0.4.3\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
             CONTENT_X + 532,
             216,
             256,
@@ -1528,7 +1539,7 @@ impl App {
         let mut ver = RECT { left: CLIENT_W - 120, top: 34, right: CLIENT_W - 28, bottom: 56 };
         draw_text(
             hdc,
-            "v0.4.2",
+            "v0.4.3",
             &mut ver,
             self.fonts.base,
             pal().header_sub,
@@ -2158,6 +2169,10 @@ impl App {
         set_text(self.controls.dim_night, &self.settings.dim_night);
         set_text(self.controls.dim_day, &self.settings.dim_day);
         set_text(
+            self.controls.dim_day_pct,
+            &self.settings.dim_day_pct.to_string(),
+        );
+        set_text(
             self.controls.dim_evening_pct,
             &self.settings.dim_evening_pct.to_string(),
         );
@@ -2174,6 +2189,7 @@ impl App {
             day: time_minutes(&self.settings.dim_day, 420) as u16,
             evening: time_minutes(&self.settings.dim_evening, 1260) as u16,
             night: time_minutes(&self.settings.dim_night, 1380) as u16,
+            day_pct: self.settings.dim_day_pct.min(100) as u8,
             evening_pct: self.settings.dim_evening_pct.min(100) as u8,
             night_pct: self.settings.dim_night_pct.min(100) as u8,
             fade: self.settings.dim_fade.min(240) as u16,
@@ -2233,6 +2249,10 @@ impl App {
         let (Some(evening), Some(night), Some(day)) = (evening, night, day) else {
             return self.schedule_error("Auto-dim times must be 24-hour HH:MM.");
         };
+        let day_pct: u32 = match hwnd_text(self.controls.dim_day_pct).trim().parse() {
+            Ok(v) if (1..=100).contains(&v) => v,
+            _ => return self.schedule_error("Day brightness must be between 1 and 100."),
+        };
         let evening_pct: u32 = match hwnd_text(self.controls.dim_evening_pct).trim().parse() {
             Ok(v) if (1..=100).contains(&v) => v,
             _ => return self.schedule_error("Evening brightness must be between 1 and 100."),
@@ -2253,12 +2273,16 @@ impl App {
                 "Auto-dim anchors must be ordered: back-to-day, then evening, then night.",
             );
         }
+        if day_pct < evening_pct {
+            return self.schedule_error("Day brightness should be at least evening brightness.");
+        }
         if evening_pct < night_pct {
             return self.schedule_error("Evening brightness should be at least night brightness.");
         }
         self.settings.dim_evening = evening;
         self.settings.dim_night = night;
         self.settings.dim_day = day;
+        self.settings.dim_day_pct = day_pct;
         self.settings.dim_evening_pct = evening_pct;
         self.settings.dim_night_pct = night_pct;
         self.settings.dim_fade = fade;
@@ -2781,10 +2805,39 @@ impl App {
         let tip = wide("Luma — monitor controls & night light");
         let n = tip.len().min(127);
         nid.szTip[..n].copy_from_slice(&tip[..n]);
-        if Shell_NotifyIconW(NIM_ADD, &nid) != 0 {
+        let ok = Shell_NotifyIconW(NIM_ADD, &nid);
+        let err = GetLastError();
+        self.log_tray(&format!(
+            "NIM_ADD ok={ok} err={err} cbSize={} hwnd={:p} icon={:p} visible={}",
+            nid.cbSize,
+            self.hwnd,
+            self.icon,
+            IsWindowVisible(self.hwnd) as i32
+        ));
+        if ok != 0 {
+            // Version 4 delivers NIN_SELECT / WM_CONTEXTMENU instead of the
+            // raw mouse messages, and needs NIF_SHOWTIP to keep the tooltip.
+            nid.uFlags = NIF_SHOWTIP;
             nid.uVersion = NOTIFYICON_VERSION_4;
-            let _ = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+            let v = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+            self.log_tray(&format!("NIM_SETVERSION ok={v} err={}", GetLastError()));
             self.tray = true;
+        } else {
+            self.tray = false;
+        }
+    }
+
+    /// Append a line to `%APPDATA%\Luma\tray.log`; failures are ignored.
+    fn log_tray(&self, msg: &str) {
+        use std::io::Write;
+        let dir = settings::config_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("tray.log"))
+        {
+            let _ = writeln!(f, "{} {msg}", settings::now_epoch());
         }
     }
 
@@ -2805,7 +2858,7 @@ impl App {
         SetForegroundWindow(self.hwnd);
     }
 
-    unsafe fn tray_menu(&mut self) {
+    unsafe fn tray_menu_at(&mut self, x: i32, y: i32) {
         let menu = CreatePopupMenu();
         if menu.is_null() {
             return;
@@ -2829,8 +2882,10 @@ impl App {
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         let exit = wide("Exit");
         AppendMenuW(menu, MF_STRING, TRAY_EXIT, exit.as_ptr());
-        let mut pt = POINT { x: 0, y: 0 };
-        GetCursorPos(&mut pt);
+        let mut pt = POINT { x, y };
+        if pt.x == 0 && pt.y == 0 {
+            GetCursorPos(&mut pt);
+        }
         SetForegroundWindow(self.hwnd);
         PostMessageW(self.hwnd, 0, 0, 0);
         let cmd = TrackPopupMenu(
@@ -3677,19 +3732,9 @@ fn make_icon(hinst: HINSTANCE) -> HICON {
         let mut and = [0u8; 32 * 4];
         for y in 0..32usize {
             for x in 0..32usize {
-                let dx = x as f64 - 15.5;
-                let dy = y as f64 - 15.5;
-                let dist = (dx * dx + dy * dy).sqrt();
-                let bit = 7 - (x % 8);
-                if dist <= 13.5 {
-                    let t = (y as f64 / 31.0).clamp(0.0, 1.0);
-                    let r = 255.0;
-                    let g = 206.0 - 76.0 * t;
-                    let b = 120.0 - 88.0 * t;
-                    let px = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-                    xor[y * 32 + x] = px;
-                } else {
-                    and[y * 4 + x / 8] |= 1 << bit;
+                match icon_pixel(x, y) {
+                    Some(px) => xor[y * 32 + x] = px,
+                    None => and[y * 4 + x / 8] |= 1 << (7 - (x % 8)),
                 }
             }
         }
@@ -3703,6 +3748,23 @@ fn make_icon(hinst: HINSTANCE) -> HICON {
             xor.as_ptr() as *const u8,
         )
     }
+}
+
+/// One pixel of the tray/app icon: `None` where the round mark ends, otherwise
+/// `0xAARRGGBB`. The alpha byte must stay opaque — the shell blends icons, so
+/// a zero alpha channel draws a fully transparent (and therefore invisible)
+/// tray slot.
+fn icon_pixel(x: usize, y: usize) -> Option<u32> {
+    let dx = x as f64 - 15.5;
+    let dy = y as f64 - 15.5;
+    if (dx * dx + dy * dy).sqrt() > 13.5 {
+        return None;
+    }
+    let t = (y as f64 / 31.0).clamp(0.0, 1.0);
+    let r = 255u32;
+    let g = (206.0 - 76.0 * t) as u32;
+    let b = (120.0 - 88.0 * t) as u32;
+    Some(0xFF00_0000 | (r << 16) | (g << 8) | b)
 }
 
 unsafe fn fill_color(hdc: HDC, rc: &RECT, color: u32) {
@@ -3753,6 +3815,16 @@ unsafe fn draw_text(hdc: HDC, text: &str, rc: &mut RECT, font: HFONT, color: u32
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    let taskbar_created = TASKBAR_CREATED.load(Ordering::Relaxed);
+    if taskbar_created != 0 && msg == taskbar_created {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+        if !ptr.is_null() {
+            let app = &mut *ptr;
+            app.tray = false;
+            app.add_tray();
+        }
+        return 0;
+    }
     match msg {
         WM_NCCREATE => {
             let cs = l as *const CREATESTRUCTW;
@@ -3928,11 +4000,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
             if !ptr.is_null() {
                 let app = &mut *ptr;
-                let ev = (l as u32) & 0xFFFF;
-                if ev == WM_RBUTTONUP {
-                    app.tray_menu();
-                } else if ev == WM_LBUTTONDBLCLK || ev == WM_LBUTTONUP {
-                    app.show_window();
+                // NOTIFYICON_VERSION_4 packs the anchor point into wParam and
+                // the event itself into lParam.
+                let x = (w as u32 & 0xFFFF) as u16 as i16 as i32;
+                let y = ((w as u32 >> 16) & 0xFFFF) as u16 as i16 as i32;
+                match l as u32 {
+                    WM_CONTEXTMENU => app.tray_menu_at(x, y),
+                    NIN_SELECT | NIN_KEYSELECT | WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+                        app.show_window()
+                    }
+                    WM_RBUTTONUP => app.tray_menu_at(0, 0),
+                    _ => {}
                 }
             }
             return 0;
@@ -3940,8 +4018,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         WM_CLOSE => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
             if !ptr.is_null() {
-                if (*ptr).settings.minimize_tray {
-                    ShowWindow(hwnd, SW_HIDE);
+                let app = &mut *ptr;
+                if app.settings.minimize_tray {
+                    if !app.tray {
+                        app.add_tray();
+                    }
+                    if app.tray {
+                        ShowWindow(hwnd, SW_HIDE);
+                    } else {
+                        message_box(
+                            hwnd,
+                            "Luma could not add a tray icon, so the window stays open. \
+                             Choose a different close behaviour in Settings, or restart Explorer.",
+                            "Luma",
+                            0x30,
+                        );
+                    }
                 } else {
                     DestroyWindow(hwnd);
                 }
@@ -4017,6 +4109,8 @@ unsafe fn run() -> i32 {
     register_slider_class(hinst);
 
     let icon = make_icon(hinst);
+    let taskbar_msg = wide("TaskbarCreated");
+    TASKBAR_CREATED.store(RegisterWindowMessageW(taskbar_msg.as_ptr()), Ordering::Relaxed);
     let class_w = wide(CLASS_NAME);
     let cls = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -4091,6 +4185,23 @@ unsafe fn run() -> i32 {
         DispatchMessageW(&msg);
     }
     0
+}
+
+#[cfg(test)]
+mod tray_icon_tests {
+    use super::icon_pixel;
+
+    #[test]
+    fn tray_icon_pixels_are_opaque() {
+        let px = icon_pixel(16, 16).expect("the centre of the mark must be drawn");
+        assert_eq!(
+            px >> 24,
+            0xFF,
+            "alpha must be opaque, otherwise the shell draws an invisible tray slot"
+        );
+        assert!(icon_pixel(0, 0).is_none(), "corners stay transparent");
+        assert!(icon_pixel(31, 31).is_none(), "corners stay transparent");
+    }
 }
 
 fn main() {

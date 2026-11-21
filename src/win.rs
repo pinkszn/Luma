@@ -292,6 +292,11 @@ pub const WM_POWERBROADCAST: u32 = 0x0218;
 pub const WM_DISPLAYCHANGE: u32 = 0x007E;
 pub const WM_HOTKEY: u32 = 0x0312;
 pub const WM_APP: u32 = 0x8000;
+pub const WM_USER: u32 = 0x0400;
+pub const WM_CONTEXTMENU: u32 = 0x007B;
+// Shell_NotifyIcon NOTIFYICON_VERSION_4 callback messages (lParam of WM_TRAY).
+pub const NIN_SELECT: u32 = 0x0400;
+pub const NIN_KEYSELECT: u32 = 0x0401;
 pub const WM_SETTEXT: u32 = 0x000C;
 pub const WM_GETTEXT: u32 = 0x000D;
 pub const WM_SETFONT: u32 = 0x0030;
@@ -486,6 +491,7 @@ extern "system" {
     ) -> BOOL;
     pub fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
     pub fn SetForegroundWindow(hWnd: HWND) -> BOOL;
+    pub fn RegisterWindowMessageW(lpString: *const u16) -> u32;
     pub fn RegisterHotKey(hWnd: HWND, id: i32, fsModifiers: u32, vk: u32) -> BOOL;
     pub fn UnregisterHotKey(hWnd: HWND, id: i32) -> BOOL;
     pub fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
@@ -537,6 +543,7 @@ extern "system" {
     pub fn GetKeyState(nVirtKey: i32) -> i16;
     pub fn SetCursor(hCursor: HCURSOR) -> HCURSOR;
     pub fn IsWindow(hWnd: HWND) -> BOOL;
+    pub fn IsWindowVisible(hWnd: HWND) -> BOOL;
     pub fn InvalidateRect(hWnd: HWND, lpRect: *const RECT, bErase: BOOL) -> BOOL;
     pub fn BeginPaint(hWnd: HWND, lpPaint: *mut PAINTSTRUCT) -> HDC;
     pub fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> BOOL;

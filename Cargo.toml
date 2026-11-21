@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 description = "Brightness, DDC/CI monitor controls and smarter night-light scheduling for Windows"
 
