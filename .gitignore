@@ -13,4 +13,10 @@
 *.log
 /diag*.txt
 
-# Local build environment dump\n/.build-env.txt
+# Local build environment dump
+/.build-env.txt
+
+# Sandbox and harness scratch
+/.acl-recovery/
+/.probe-file-backend.txt
+/.buildtmp/
