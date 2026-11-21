@@ -48,4 +48,26 @@ $env:RUSTUP_HOME = $rustupHome
 $env:CARGO_HOME = $cargoHome
 $cargo = Join-Path $cargoHome 'bin\cargo.exe'
 & $cargo @CargoArgs
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+
+# Sign the binary with the local code-signing certificate when one exists.
+# Without a signature Windows SmartScreen treats every build as an unknown
+# publisher and blocks a double-click launch behind "Windows protected your PC".
+if ($code -eq 0) {
+    $profileName = if ($CargoArgs -contains '--release' -or $CargoArgs -contains '-r') { 'release' } else { 'debug' }
+    $exe = Join-Path $root "target\$profileName\luma.exe"
+    $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue |
+        Where-Object { $_.Subject -like 'CN=Luma Dev*' -and $_.NotAfter -gt (Get-Date) } |
+        Sort-Object NotAfter -Descending |
+        Select-Object -First 1
+    if ((Test-Path $exe) -and $cert) {
+        $sig = Set-AuthenticodeSignature -FilePath $exe -Certificate $cert -HashAlgorithm SHA256 `
+            -TimestampServer 'http://timestamp.digicert.com' -ErrorAction SilentlyContinue
+        if (-not $sig) {
+            $sig = Set-AuthenticodeSignature -FilePath $exe -Certificate $cert -HashAlgorithm SHA256
+        }
+        Write-Host ("signed {0} [{1}]" -f $exe, $sig.Status)
+    }
+}
+
+exit $code
