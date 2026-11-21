@@ -12,3 +12,5 @@
 # Logs and diagnostics
 *.log
 /diag*.txt
+
+# Local build environment dump\n/.build-env.txt

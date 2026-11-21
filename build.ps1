@@ -6,8 +6,25 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat'
-$cargoHome = Join-Path $root '..\.tools\cargo'
-$rustupHome = Join-Path $root '..\.tools\rustup'
+
+# Find the workspace-local Rust toolchain (.tools). The project may be checked
+# out at any depth below the folder that holds it, so walk up to four levels.
+$tools = $null
+$dir = $root
+for ($i = 0; $i -lt 4; $i++) {
+    $candidate = Join-Path $dir '.tools'
+    if (Test-Path (Join-Path $candidate 'cargo\bin\cargo.exe')) {
+        $tools = $candidate
+        break
+    }
+    $parent = Split-Path -Parent $dir
+    if (-not $parent -or $parent -eq $dir) { break }
+    $dir = $parent
+}
+if (-not $tools) { throw "Rust toolchain not found: no .tools\cargo\bin\cargo.exe in $root or its parents" }
+
+$cargoHome = Join-Path $tools 'cargo'
+$rustupHome = Join-Path $tools 'rustup'
 $envFile = Join-Path $root '.build-env.txt'
 
 if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
