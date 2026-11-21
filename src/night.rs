@@ -1,7 +1,7 @@
 //! Night-light schedule math: solar times, weekday/weekend windows, fades,
 //! and the gamma ramp that implements the tint.
 
-use crate::settings::{parse_hhmm, time_minutes, Settings};
+use crate::settings::{time_minutes, Settings};
 use crate::win::{local_now, SYSTEMTIME};
 
 #[derive(Clone, Copy)]
@@ -299,10 +299,6 @@ fn kelvin_rgb(k: u32) -> (f64, f64, f64) {
         (g / max).clamp(0.0, 1.0),
         (b / max).clamp(0.0, 1.0),
     )
-}
-
-pub fn parse_schedule_time(s: &str) -> Option<(u32, u32)> {
-    parse_hhmm(s)
 }
 
 #[cfg(test)]

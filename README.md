@@ -43,15 +43,18 @@ line instead of failing silently.
   - **Always** — keep the filter active permanently.
 - Color temperature (1000–6500 K, Tanner Helland mapping) and strength (0–100%).
 - Fade duration (0–240 min) so the ramp eases in and out instead of snapping.
+- Latitude, longitude and UTC offset for the solar calculation, and the weekday and weekend schedules in `HH:MM` form, live on this tab.
 - "Pause 1 hour" button; pauses survive restarts.
 - Toggle the filter globally with `Ctrl+Alt+N`.
 - Live status showing the current mode, next transition, and computed sunrise/sunset.
 
+### Auto dim tab
+
+- Dims the display automatically on a schedule or when idle; "Apply now" saves the current settings.
+
 ### Settings tab
 
-- Latitude, longitude and UTC offset for the solar calculation.
-- Weekday and weekend schedules in `HH:MM` form.
-- Fade duration, minimize-to-tray, and run-at-login (per-user registry entry).
+- Fade duration, minimize-to-tray, dark mode and run-at-login (per-user registry entry).
 - Open settings folder / reset to defaults.
 
 ## Tray icon

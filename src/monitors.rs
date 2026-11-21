@@ -276,19 +276,6 @@ pub fn read_gamma(device: &str) -> Option<[u16; 768]> {
     }
 }
 
-pub fn gamma_looks_applied(device: &str, expected: &[u16; 768]) -> bool {
-    // The middle of the ramp is enough to spot a driver reset, with tolerance
-    // for driver-side clamping.
-    match read_gamma(device) {
-        Some(cur) => {
-            let idx = [512usize, 384, 640]; // blue mid, green mid, red-ish
-            idx.iter()
-                .all(|&i| (cur[i] as i32 - expected[i] as i32).abs() <= 1200)
-        }
-        None => false,
-    }
-}
-
 const WMI_GET: &str = "$ErrorActionPreference='SilentlyContinue';\
 $b=Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1;\
 if($b){[Console]::Out.Write([string]$b.CurrentBrightness)}";

@@ -9,8 +9,7 @@ mod win;
 use crate::monitors::{apply_gamma, read_gamma, Display};
 use crate::night::{solar_summary, NightInfo};
 use crate::settings::{
-    config_dir, normalize_time, now_epoch, parse_hhmm, time_minutes, Settings, DEFAULT_FADE,
-    DEFAULT_STRENGTH, DEFAULT_TEMP,
+    config_dir, normalize_time, now_epoch, parse_hhmm, time_minutes, Settings,
 };
 use crate::win::*;
 use std::ffi::c_void;
@@ -311,52 +310,36 @@ const C_NAV3: u16 = 83;
 const C_MON_LIST: u16 = 101;
 const C_MON_REFRESH: u16 = 102;
 const C_BRIGHT: u16 = 103;
-const C_BRIGHT_LABEL: u16 = 104;
 const C_PANEL: u16 = 105;
-const C_PANEL_LABEL: u16 = 106;
-const C_PANEL_CAPTION: u16 = 107;
 const C_VCP_COMBO: u16 = 108;
 const C_VCP_READ: u16 = 109;
 const C_VCP_SLIDER: u16 = 110;
-const C_VCP_VALUE: u16 = 111;
-const C_VCP_MAX: u16 = 112;
 const C_VCP_EDIT: u16 = 113;
 const C_VCP_SET: u16 = 114;
 const C_VCP_ENUM: u16 = 115;
 const C_VCP_CUSTOM: u16 = 116;
 const C_VCP_USE: u16 = 117;
-const C_DISP_STATUS: u16 = 118;
 const C_BRIGHT_GROUP: u16 = 119;
 const C_VCP_GROUP: u16 = 120;
-const C_BRIGHT_CAPTION: u16 = 121;
-const C_VCP_CAPTION: u16 = 122;
-const C_VCP_HINT: u16 = 123;
 const C_MON_GROUP: u16 = 124;
 
 const C_NL_ENABLE: u16 = 201;
 const C_NL_MODE: u16 = 202;
-const C_NL_STATUS: u16 = 203;
 const C_NL_LAT: u16 = 204;
 const C_NL_LON: u16 = 205;
 const C_NL_TZ: u16 = 206;
-const C_NL_SUN: u16 = 207;
 const C_NL_WD_START: u16 = 208;
 const C_NL_WD_END: u16 = 209;
 const C_NL_WEEKEND: u16 = 210;
 const C_NL_WE_START: u16 = 211;
 const C_NL_WE_END: u16 = 212;
 const C_NL_TEMP: u16 = 213;
-const C_NL_TEMP_LABEL: u16 = 214;
 const C_NL_STRENGTH: u16 = 215;
-const C_NL_STRENGTH_LABEL: u16 = 216;
 const C_NL_FADE: u16 = 217;
-const C_NL_FADE_LABEL: u16 = 218;
 const C_NL_PAUSE: u16 = 219;
 const C_NL_APPLY: u16 = 220;
 const C_NL_RESET_TINT: u16 = 226;
 const C_NL_PREVIEW: u16 = 227;
-const C_NL_INFO: u16 = 221;
-const C_NL_MODE_LABEL: u16 = 222;
 const C_NL_SOLAR_GROUP: u16 = 223;
 const C_NL_CUSTOM_GROUP: u16 = 224;
 const C_NL_TUNING_GROUP: u16 = 225;
@@ -367,13 +350,11 @@ const C_AUTOSTART: u16 = 301;
 const C_MINIMIZE: u16 = 302;
 const C_OPEN_FOLDER: u16 = 303;
 const C_RESET: u16 = 304;
-const C_ABOUT: u16 = 305;
-const C_HOTKEYS: u16 = 306;
 const C_START_GROUP: u16 = 307;
 const C_HOTKEY_GROUP: u16 = 308;
 const C_ABOUT_GROUP: u16 = 309;
-const C_SETTINGS_HINT: u16 = 310;
 const C_DARK_MODE: u16 = 311;
+const C_EXIT: u16 = 312;
 
 const C_DIM_ENABLE: u16 = 401;
 const C_DIM_EVENING: u16 = 402;
@@ -382,19 +363,15 @@ const C_DIM_DAY: u16 = 404;
 const C_DIM_EVENING_PCT: u16 = 405;
 const C_DIM_NIGHT_PCT: u16 = 406;
 const C_DIM_FADE: u16 = 407;
-const C_DIM_TARGET: u16 = 408;
-const C_DIM_PHASE: u16 = 409;
 const C_DIM_APPLY: u16 = 410;
 const C_DIM_GROUP_A: u16 = 411;
 const C_DIM_GROUP_B: u16 = 412;
 const C_DIM_GROUP_C: u16 = 413;
-const C_DIM_STATUS: u16 = 414;
 const C_DIM_CHART: u16 = 415;
 const C_DIM_GAUGE: u16 = 416;
 const C_DIM_DAY_PCT: u16 = 417;
 
-const C_FOOTER: u16 = 901;
-
+const WM_SCAN: u32 = WM_APP + 2;
 const TRAY_SHOW: usize = 4001;
 const TRAY_TOGGLE: usize = 4002;
 const TRAY_PAUSE: usize = 4003;
@@ -549,6 +526,8 @@ struct App {
     tray: bool,
     /// Win32 error from the most recent failed `Shell_NotifyIconW(NIM_ADD)`.
     tray_err: u32,
+    /// Tick count of the last automatic tray re-register attempt.
+    tray_check_ms: u64,
 }
 
 impl App {
@@ -596,6 +575,7 @@ impl App {
             dim_last_status: String::new(),
             tray: false,
             tray_err: 0,
+            tray_check_ms: 0,
         }
     }
 
@@ -606,6 +586,7 @@ impl App {
         self.log_tray("on_create begin");
         self.hinst = GetModuleHandleW(std::ptr::null());
         set_dark_mode(self.settings.dark);
+        self.set_titlebar_dark();
         self.br_bg = CreateSolidBrush(pal().bg);
         self.br_card = CreateSolidBrush(pal().card);
         self.br_well = CreateSolidBrush(pal().well);
@@ -626,6 +607,7 @@ impl App {
         self.create_settings_page();
         self.create_footer();
         self.set_page(0);
+        self.add_tips();
 
         self.populate_settings_ui();
 
@@ -633,9 +615,10 @@ impl App {
         // it appears immediately instead of ~41 s after startup.
         self.add_tray();
 
-        self.refresh_monitors();
+        // Show the window first; the slow DDC/CI scan runs from a posted message.
+        self.set_footer("Scanning displays…");
+        PostMessageW(hwnd, WM_SCAN, 0, 0);
         self.restyle_edits();
-        self.refresh_night_now();
         RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_ALT, VK_N);
         RegisterHotKey(hwnd, 2, MOD_CONTROL | MOD_ALT, VK_UP);
         RegisterHotKey(hwnd, 3, MOD_CONTROL | MOD_ALT, VK_DOWN);
@@ -666,8 +649,72 @@ impl App {
         }
     }
 
+    unsafe fn set_titlebar_dark(&self) {
+        let v: i32 = self.settings.dark as i32;
+        DwmSetWindowAttribute(
+            self.hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &v as *const i32 as *const c_void,
+            4,
+        );
+    }
+
+    /// Hover tips for controls whose purpose is not obvious from the label.
+    unsafe fn add_tips(&mut self) {
+        let cls = wide("tooltips_class32");
+        let tip = CreateWindowExW(
+            WS_EX_TOPMOST,
+            cls.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            self.hwnd,
+            null_mut(),
+            self.hinst,
+            null_mut(),
+        );
+        if tip.is_null() {
+            return;
+        }
+        SendMessageW(tip, TTM_SETMAXTIPWIDTH, 0, 320);
+        let c = &self.controls;
+        let tips: [(HWND, &str); 14] = [
+            (c.refresh, "Re-scan connected monitors (DDC/CI)."),
+            (c.bright, "Monitor brightness. Hotkeys: Ctrl+Alt+Up / Ctrl+Alt+Down."),
+            (c.panel, "Built-in laptop panel brightness."),
+            (c.vcp_read, "Read the current value from the monitor."),
+            (c.vcp_set, "Write the typed value to the monitor."),
+            (c.vcp_use, "Select the custom VCP code typed on the left."),
+            (c.nl_enable, "Turn the night-light tint on or off (Ctrl+Alt+N)."),
+            (c.pause, "Pause the tint for one hour."),
+            (c.apply, "Save the location and schedule fields."),
+            (c.reset_tint, "Restore default temperature, strength and fade."),
+            (c.dim_apply, "Save the auto-dim settings."),
+            (c.minimize, "Closing the window keeps Luma running in the tray."),
+            (c.dark_mode, "Switch between the light and dark theme."),
+            (c.reset, "Restore all settings to their defaults."),
+        ];
+        for (h, text) in tips {
+            if h.is_null() {
+                continue;
+            }
+            let mut w = wide(text);
+            let mut ti: TOOLINFOW = std::mem::zeroed();
+            ti.cbSize = std::mem::size_of::<TOOLINFOW>() as u32;
+            ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+            ti.hwnd = self.hwnd;
+            ti.uId = h as usize;
+            ti.lpszText = w.as_mut_ptr();
+            SendMessageW(tip, TTM_ADDTOOLW, 0, &ti as *const TOOLINFOW as isize);
+        }
+    }
+
     unsafe fn apply_theme(&mut self) {
         set_dark_mode(self.settings.dark);
+        self.set_titlebar_dark();
         if !self.br_bg.is_null() {
             DeleteObject(self.br_bg as HANDLE);
         }
@@ -749,7 +796,7 @@ impl App {
                     let old_proc = SetWindowLongPtrW(
                         c,
                         GWLP_WNDPROC,
-                        combo_arrow_subclass as usize as isize,
+                        combo_arrow_subclass as *const () as usize as isize,
                     );
                     COMBO_OLD_PROC.store(old_proc, Ordering::Relaxed);
                 } else {
@@ -1055,7 +1102,7 @@ impl App {
         let old_proc = SetWindowLongPtrW(
             self.controls.vcp_edit,
             GWLP_WNDPROC,
-            vcp_edit_subclass as usize as isize,
+            vcp_edit_subclass as *const () as usize as isize,
         );
         VCP_EDIT_OLD_PROC.store(old_proc, Ordering::Relaxed);
         self.controls.vcp_set =
@@ -1413,7 +1460,7 @@ impl App {
             4,
         );
         self.controls.minimize = self.checkbox(
-            "Close button minimises to the tray",
+            "Close button minimizes to the tray",
             CONTENT_X + 16,
             250,
             468,
@@ -1451,7 +1498,7 @@ impl App {
 
         self.card("About", CONTENT_X + 516, 176, 288, 336, C_ABOUT_GROUP, 4);
         self.controls.about = self.label(
-            "Luma 0.4.3\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
+            "Luma 0.4.4\n\nNative Windows monitor control: brightness, every MCCS/VCP control, sunset-aware night light, and a time-based auto-dim curve.\n\nBrightness uses DDC/CI on external monitors and the panel API on laptops.\n\nGamma ramps are restored when Luma exits.",
             CONTENT_X + 532,
             216,
             256,
@@ -1464,6 +1511,7 @@ impl App {
             self.button("Open settings folder", CONTENT_X + 516, 528, 140, 32, C_OPEN_FOLDER, false, 4);
         self.controls.reset =
             self.button("Reset settings…", CONTENT_X + 666, 528, 138, 32, C_RESET, false, 4);
+        self.button("Exit Luma", CONTENT_X + 16, 528, 140, 32, C_EXIT, false, 4);
         self.controls.settings_hint = self.hint(
             "Settings file:\n%APPDATA%\\Luma\\settings.ini",
             CONTENT_X + 516,
@@ -1515,7 +1563,7 @@ impl App {
                 self.paint_primary(d.hDC, &rc, d.hwndItem, d.itemState)
             }
             C_MON_REFRESH | C_VCP_READ | C_VCP_USE | C_NL_RESET_TINT | C_NL_PAUSE
-            | C_NL_USE_TZ | C_OPEN_FOLDER | C_RESET => {
+            | C_NL_USE_TZ | C_OPEN_FOLDER | C_RESET | C_EXIT => {
                 self.paint_secondary(d.hDC, &rc, d.hwndItem, d.itemState)
             }
             _ => {}
@@ -1526,7 +1574,7 @@ impl App {
         fill_color(hdc, rc, pal().header);
         let mut moon = RECT { left: 28, top: 26, right: 64, bottom: 62 };
         fill_ellipse(hdc, &moon, pal().accent);
-        let mut cut = RECT { left: 46, top: 19, right: 82, bottom: 55 };
+        let cut = RECT { left: 46, top: 19, right: 82, bottom: 55 };
         fill_ellipse(hdc, &cut, pal().header);
         moon = RECT { left: 92, top: 20, right: 500, bottom: 58 };
         draw_text(hdc, "Luma", &mut moon, self.fonts.title, COL_WHITE, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1542,7 +1590,7 @@ impl App {
         let mut ver = RECT { left: CLIENT_W - 120, top: 34, right: CLIENT_W - 28, bottom: 56 };
         draw_text(
             hdc,
-            "v0.4.3",
+            "v0.4.4",
             &mut ver,
             self.fonts.base,
             pal().header_sub,
@@ -1624,18 +1672,6 @@ impl App {
         }
         let mut buf = [0u16; 256];
         let n = SendMessageW(hwnd, CB_GETLBTEXT, id as usize, buf.as_mut_ptr() as isize);
-        if n <= 0 {
-            return String::new();
-        }
-        from_wide(&buf[..n as usize])
-    }
-
-    unsafe fn list_item_text(hwnd: HWND, id: i32) -> String {
-        if id < 0 {
-            return String::new();
-        }
-        let mut buf = [0u16; 256];
-        let n = SendMessageW(hwnd, LB_GETTEXT, id as usize, buf.as_mut_ptr() as isize);
         if n <= 0 {
             return String::new();
         }
@@ -2617,8 +2653,14 @@ impl App {
         self.sync_page_visibility();
     }
 
+    /// Slider moves arrive in bursts; each DDC write blocks for ~50 ms, so wait for
+    /// a short pause and write only the final value.
     unsafe fn set_brightness_from_slider(&mut self) {
         self.last_manual_bright = GetTickCount64();
+        SetTimer(self.hwnd, 2, 80, std::ptr::null());
+    }
+
+    unsafe fn apply_brightness_slider(&mut self) {
         if self.displays.is_empty() {
             return;
         }
@@ -2826,6 +2868,18 @@ impl App {
             self.log_tray(&format!("NIM_SETVERSION ok={v} err={}", GetLastError()));
             self.tray = true;
             self.tray_err = 0;
+            // Ask the shell where it thinks the icon is: this proves the icon is
+            // registered somewhere, which NIM_ADD's return value does not.
+            let mut ident: NOTIFYICONIDENTIFIER = std::mem::zeroed();
+            ident.cbSize = std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32;
+            ident.hWnd = self.hwnd;
+            ident.uID = 1;
+            let mut rect: RECT = std::mem::zeroed();
+            let hr = Shell_NotifyIconGetRect(&ident, &mut rect);
+            self.log_tray(&format!(
+                "GetRect hr=0x{hr:08X} rect={},{},{},{}",
+                rect.left, rect.top, rect.right, rect.bottom
+            ));
         } else {
             self.tray = false;
             self.tray_err = err;
@@ -2859,8 +2913,42 @@ impl App {
         }
     }
 
-    unsafe fn remove_tray(&mut self) {
+    /// Re-register the icon after Explorer restarts or after anything else that
+    /// dropped it. Cheap enough to run on every message.
+    unsafe fn recover_messages(&mut self) {
         if self.tray {
+            return;
+        }
+        let idle = GetTickCount64();
+        if idle.saturating_sub(self.tray_check_ms) < 5000 {
+            return;
+        }
+        self.tray_check_ms = idle;
+        self.add_tray();
+    }
+
+    /// Log what the shell believes about our icon. Call this right after a
+    /// hide/show round-trip: a shadowed or foreign window quietly loses its
+    /// tray registration and clicks stop being routed to it.
+    unsafe fn probe_icon(&self, tag: &str) {
+        let mut ident: NOTIFYICONIDENTIFIER = std::mem::zeroed();
+        ident.cbSize = std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32;
+        ident.hWnd = self.hwnd;
+        ident.uID = 1;
+        let mut rect: RECT = std::mem::zeroed();
+        let hr = Shell_NotifyIconGetRect(&ident, &mut rect);
+        self.log_tray(&format!(
+            "{tag}: GetRect hr=0x{hr:08X} rect={},{},{},{} visible={} tray={}",
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom,
+            IsWindowVisible(self.hwnd) as i32,
+            self.tray as i32
+        ));
+    }
+
+    unsafe fn remove_tray(&mut self) {        if self.tray {
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
             nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
             nid.hWnd = self.hwnd;
@@ -2871,14 +2959,24 @@ impl App {
     }
 
     unsafe fn show_window(&mut self) {
+        self.log_tray("show_window: called");
+        let was_visible = IsWindowVisible(self.hwnd);
         ShowWindow(self.hwnd, SW_RESTORE);
         ShowWindow(self.hwnd, SW_SHOW);
         SetForegroundWindow(self.hwnd);
+        self.log_tray(&format!(
+            "show_window: visible {} -> {} fg={:p} me={:p}",
+            was_visible as i32,
+            IsWindowVisible(self.hwnd) as i32,
+            GetForegroundWindow(),
+            self.hwnd
+        ));
     }
 
     unsafe fn tray_menu_at(&mut self, x: i32, y: i32) {
         let menu = CreatePopupMenu();
         if menu.is_null() {
+            self.log_tray("tray_menu_at: CreatePopupMenu failed");
             return;
         }
         let show = wide("Show Luma");
@@ -2900,22 +2998,50 @@ impl App {
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         let exit = wide("Exit");
         AppendMenuW(menu, MF_STRING, TRAY_EXIT, exit.as_ptr());
-        let mut pt = POINT { x, y };
-        if pt.x == 0 && pt.y == 0 {
-            GetCursorPos(&mut pt);
+        // An empty anchor means "at the cursor": that is what the right-click path
+        // sends, and it is also what we want when Explorer reports 0,0.
+        // The cursor is on the icon when this fires; Explorer's reported anchor
+        // can be off (DPI or taskbar-relative), which floated the menu too high.
+        let _ = (x, y);
+        let mut pt = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut pt);
+        // Anchor to the top edge of the icon itself. TPM_WORKAREA is dropped on
+        // this path: another docked bar can shrink the work area and push the menu
+        // far above the taskbar.
+        let mut flags = TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RETURNCMD | TPM_NONOTIFY;
+        let mut ident: NOTIFYICONIDENTIFIER = std::mem::zeroed();
+        ident.cbSize = std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32;
+        ident.hWnd = self.hwnd;
+        ident.uID = 1;
+        let mut irect: RECT = std::mem::zeroed();
+        if Shell_NotifyIconGetRect(&ident, &mut irect) == 0 && irect.right > irect.left {
+            pt.x = irect.left;
+            pt.y = irect.top;
+        } else {
+            flags |= TPM_WORKAREA;
         }
+        // Standard tray-menu recipe: make our window foreground (without showing
+        // it) so the menu dismisses on outside click, then WM_NULL afterwards.
+        let before = GetForegroundWindow();
         SetForegroundWindow(self.hwnd);
-        PostMessageW(self.hwnd, 0, 0, 0);
+        let after = GetForegroundWindow();
+        self.log_tray(&format!(
+            "tray_menu_at: anchor={},{} fg_before={:p} fg_after={:p} me={:p}",
+            pt.x, pt.y, before, after, self.hwnd
+        ));
         let cmd = TrackPopupMenu(
             menu,
-            TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RETURNCMD | TPM_NONOTIFY,
+            flags,
             pt.x,
             pt.y,
             0,
             self.hwnd,
             std::ptr::null(),
         );
+        let err = GetLastError();
+        PostMessageW(self.hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
+        self.log_tray(&format!("tray_menu_at: TrackPopupMenu returned {cmd} err={err}"));
         match cmd as usize {
             TRAY_SHOW => self.show_window(),
             TRAY_TOGGLE => self.toggle_enabled(),
@@ -2959,7 +3085,12 @@ impl App {
             C_NAV1 => self.set_page(1),
             C_NAV2 => self.set_page(3),
             C_NAV3 => self.set_page(2),
-            C_MON_REFRESH => self.refresh_monitors(),
+            C_MON_REFRESH => {
+                self.set_footer("Scanning displays…");
+                UpdateWindow(self.hwnd);
+                self.refresh_monitors();
+                self.refresh_footer();
+            }
             C_MON_LIST => {
                 if code == LBN_SELCHANGE {
                     let sel = SendMessageW(self.controls.list, LB_GETCURSEL, 0, 0);
@@ -2984,7 +3115,19 @@ impl App {
                 if code == CBN_SELCHANGE {
                     let values = enum_values(self.vcp_code);
                     let sel = combo_selection(self.controls.vcp_enum);
-                    if let Some((v, _)) = values.get(sel) {
+                    if let Some((v, name)) = values.get(sel) {
+                        // Input source (0x60): switching to an unplugged input
+                        // blanks the screen, so ask first and restore on "No".
+                        if self.vcp_code == 0x60 {
+                            let text = format!(
+                                "Switch this monitor's input to \"{}\"?\n\nIf nothing is connected to that input the screen will go blank; use the monitor's own buttons to switch back.",
+                                name
+                            );
+                            if message_box(self.hwnd, &text, "Luma", 0x4 | 0x20) != 6 {
+                                self.read_vcp();
+                                return;
+                            }
+                        }
                         self.vcp_write(*v);
                     }
                 }
@@ -3137,6 +3280,9 @@ impl App {
                     },
                 );
             }
+            C_EXIT => {
+                DestroyWindow(self.hwnd);
+            }
             C_OPEN_FOLDER => {
                 let dir = config_dir();
                 let _ = std::fs::create_dir_all(&dir);
@@ -3159,6 +3305,8 @@ impl App {
                     self.settings.selected = 0;
                     self.selected = 0;
                     self.settings.save();
+                    set_autostart(false);
+                    self.apply_theme();
                     self.dirty = false;
                     self.populate_settings_ui();
                     self.refresh_night_now();
@@ -3217,7 +3365,8 @@ impl App {
     }
 
     unsafe fn schedule_error(&mut self, text: &str) {
-        message_box(self.hwnd, text, "Luma", 0x10);
+        // Inline, not modal: the user is mid-edit and the fields stay in reach.
+        self.set_footer(text);
     }
 
     unsafe fn on_hscroll(&mut self, code: u32, hwnd: HWND) {
@@ -3357,14 +3506,6 @@ fn parse_number(s: &str) -> Option<u32> {
 
 fn normalize_or_error(s: String) -> Option<String> {
     normalize_time(&s)
-}
-
-fn fmt_tz(tz: f64) -> String {
-    if (tz - tz.round()).abs() < 0.01 {
-        format!("{}", tz.round() as i32)
-    } else {
-        format!("{:.1}", tz)
-    }
 }
 
 fn local_minute() -> u16 {
@@ -3853,6 +3994,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
             if !ptr.is_null() {
                 (*ptr).on_create(hwnd);
+                // The shell runs at a higher integrity level than an unelevated
+                // app, and UIPI drops its messages to us unless we opt in. Without
+                // this the tray icon can be registered and still never clickable.
+                for m in [
+                    WM_TRAY,
+                    WM_COPYDATA,
+                    WM_SETTINGCHANGE,
+                    WM_NOTIFY,
+                    WM_CONTEXTMENU,
+                ] {
+                    let r = ChangeWindowMessageFilterEx(hwnd, m, MSGFLT_ALLOW, null_mut());
+                    (*ptr).log_tray(&format!("MSGFLT_ALLOW 0x{m:X} ok={r} err={}", GetLastError()));
+                }
             }
             return 0;
         }
@@ -3998,7 +4152,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         WM_TIMER => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
             if !ptr.is_null() {
-                (*ptr).tick();
+                if w == 2 {
+                    KillTimer(hwnd, 2);
+                    (*ptr).apply_brightness_slider();
+                } else {
+                    (*ptr).tick();
+                }
+            }
+            return 0;
+        }
+        WM_SCAN => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+            if !ptr.is_null() {
+                let app = &mut *ptr;
+                app.refresh_monitors();
+                app.refresh_night_now();
+                app.refresh_footer();
             }
             return 0;
         }
@@ -4022,14 +4191,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                 // the event itself into lParam.
                 let x = (w as u32 & 0xFFFF) as u16 as i16 as i32;
                 let y = ((w as u32 >> 16) & 0xFFFF) as u16 as i16 as i32;
-                match l as u32 {
+                // Version 4: LOWORD(lParam) is the event, HIWORD is the icon id.
+                let ev = (l as u32) & 0xFFFF;
+                // Only log what we act on: hover produces a flood of WM_MOUSEMOVE.
+                if ev == WM_CONTEXTMENU
+                    || ev == NIN_SELECT
+                    || ev == NIN_KEYSELECT
+                    || ev == WM_LBUTTONDBLCLK
+                {
+                    app.log_tray(&format!("WM_TRAY event=0x{:X} anchor={x},{y}", ev));
+                }
+                match ev {
                     WM_CONTEXTMENU => app.tray_menu_at(x, y),
                     NIN_SELECT | NIN_KEYSELECT | WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+                        // A left click on the icon is meant to bring the window up;
+                        // the notification area also reports raw right-button
+                        // messages, so never open the menu from here.
                         app.show_window()
                     }
-                    WM_RBUTTONUP => app.tray_menu_at(0, 0),
                     _ => {}
                 }
+                return 0;
             }
             return 0;
         }
@@ -4052,11 +4234,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             if !ptr.is_null() {
                 let app = &mut *ptr;
                 if app.settings.minimize_tray {
+                    // If closing does not actually take the window off screen,
+                    // nothing is minimised and clicks that "do nothing" are
+                    // really reaching a window hidden behind the desktop.
+                    app.log_tray(&format!(
+                        "WM_CLOSE: foreground={:p} me={:p}",
+                        GetForegroundWindow(),
+                        hwnd
+                    ));
                     if !app.tray {
                         app.add_tray();
                     }
                     if app.tray {
+                        app.probe_icon("WM_CLOSE before hide");
                         ShowWindow(hwnd, SW_HIDE);
+                        app.log_tray("WM_CLOSE: window hidden, tray icon kept");
+                        app.probe_icon("WM_CLOSE after hide");
                     } else {
                         let text = format!(
                             "Luma could not add a tray icon (Windows error {}), so the window \
@@ -4097,6 +4290,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
 
 impl App {
     unsafe fn adjust_brightness_hotkey(&mut self, delta: i32) {
+        self.last_manual_bright = GetTickCount64();
         if self.displays.is_empty() {
             return;
         }
@@ -4129,7 +4323,7 @@ fn show_existing_instance() {
 
 unsafe fn run() -> i32 {
     let hinst = GetModuleHandleW(std::ptr::null());
-    let mut icc = INITCOMMONCONTROLSEX {
+    let icc = INITCOMMONCONTROLSEX {
         dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
         dwICC: ICC_WIN95_CLASSES,
     };
@@ -4173,10 +4367,12 @@ unsafe fn run() -> i32 {
     AdjustWindowRectEx(&mut rect, win_style, 0, 0);
     let ww = rect.right - rect.left;
     let wh = rect.bottom - rect.top;
-    let sw = GetSystemMetrics(0);
-    let sh = GetSystemMetrics(1);
-    let x = (sw - ww) / 2;
-    let y = (sh - wh) / 2;
+    let mut work: RECT = std::mem::zeroed();
+    if SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut RECT as *mut c_void, 0) == 0 {
+        work = RECT { left: 0, top: 0, right: GetSystemMetrics(0), bottom: GetSystemMetrics(1) };
+    }
+    let x = (work.left + (work.right - work.left - ww) / 2).max(work.left);
+    let y = (work.top + (work.bottom - work.top - wh) / 2).max(work.top);
 
     let Some(mutex) = is_first_instance() else {
         show_existing_instance();
@@ -4213,8 +4409,22 @@ unsafe fn run() -> i32 {
         if r <= 0 {
             break;
         }
+        // Tab / Shift+Tab move between controls. Only Tab goes through the dialog
+        // manager so Enter/Esc keep their per-control handling.
+        if msg.message == WM_KEYDOWN
+            && msg.wParam == VK_TAB as usize
+            && IsDialogMessageW(hwnd, &mut msg) != 0
+        {
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+        // A modal loop (slider drag, menu) can swallow the callbacks the shell
+        // sent us; the timer reclaims them once the thread is free again.
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+        if !ptr.is_null() {
+            (*ptr).recover_messages();
+        }
     }
     0
 }

@@ -110,6 +110,8 @@ pub struct DISPLAY_DEVICEW {
     pub DeviceKey: [u16; 128],
 }
 pub const DISPLAY_DEVICE_ACTIVE: u32 = 0x1;
+pub const SPI_GETWORKAREA: u32 = 0x0030;
+pub const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -159,6 +161,16 @@ pub struct MSG {
     pub lPrivate: u32,
 }
 #[repr(C)]
+pub struct MENUINFO {
+    pub cbSize: u32,
+    pub fMask: u32,
+    pub dwStyle: u32,
+    pub cyMax: u32,
+    pub hbrBack: HANDLE,
+    pub dwContextHelpID: u32,
+    pub dwMenuData: usize,
+}
+#[repr(C)]
 pub struct INITCOMMONCONTROLSEX {
     pub dwSize: u32,
     pub dwICC: u32,
@@ -194,6 +206,36 @@ pub struct NOTIFYICONDATAW {
     pub guidItem: GUID,
     pub hBalloonIcon: HICON,
 }
+
+#[repr(C)]
+pub struct NOTIFYICONIDENTIFIER {
+    pub cbSize: u32,
+    pub hWnd: HWND,
+    pub uID: u32,
+    pub guidItem: GUID,
+}
+
+#[repr(C)]
+pub struct TOOLINFOW {
+    pub cbSize: u32,
+    pub uFlags: u32,
+    pub hwnd: HWND,
+    pub uId: usize,
+    pub rect: RECT,
+    pub hinst: HINSTANCE,
+    pub lpszText: *mut u16,
+    pub lParam: isize,
+    pub lpReserved: *mut c_void,
+}
+pub const TTM_ADDTOOLW: u32 = 0x0432;
+pub const TTM_SETMAXTIPWIDTH: u32 = 0x0418;
+pub const TTM_SETDELAYTIME: u32 = 0x0403;
+pub const TTF_IDISHWND: u32 = 0x0001;
+pub const TTF_SUBCLASS: u32 = 0x0010;
+pub const TTS_ALWAYSTIP: u32 = 0x01;
+pub const TTS_NOPREFIX: u32 = 0x02;
+pub const WS_POPUP: u32 = 0x8000_0000;
+pub const WS_EX_TOPMOST: u32 = 0x0000_0008;
 
 pub const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
 pub const WS_OVERLAPPEDWINDOW: u32 = 0x00CF_0000;
@@ -362,6 +404,8 @@ pub const NIF_MESSAGE: u32 = 0x1;
 pub const NIF_ICON: u32 = 0x2;
 pub const NIF_TIP: u32 = 0x4;
 pub const NIF_SHOWTIP: u32 = 0x80;
+pub const NIF_INFO: u32 = 0x10;
+pub const NIIF_INFO: u32 = 0x1;
 pub const NOTIFYICON_VERSION_4: u32 = 4;
 
 pub const WM_TRAY: u32 = WM_APP + 1;
@@ -378,6 +422,7 @@ pub const VK_LEFT: u32 = 0x25;
 pub const VK_RIGHT: u32 = 0x27;
 pub const VK_SHIFT: u32 = 0x10;
 pub const VK_RETURN: u32 = 0x0D;
+pub const VK_TAB: u32 = 0x09;
 pub const DLGC_WANTARROWS: isize = 0x0001;
 
 pub const MF_STRING: u32 = 0;
@@ -386,6 +431,12 @@ pub const MF_CHECKED: u32 = 0x8;
 pub const TPM_LEFTALIGN: u32 = 0;
 pub const TPM_RIGHTBUTTON: u32 = 0x2;
 pub const TPM_BOTTOMALIGN: u32 = 0x20;
+/// A tray popup without this style never gets mouse state from the taskbar, so
+/// its items cannot be clicked (TrackPopupMenu returns 0). Cheap to add.
+pub const TPM_WORKAREA: u32 = 0x10000;
+pub const MIM_STYLE: u32 = 0x10;
+pub const MNS_NOTIFYBYPOS: u32 = 0x8000000;
+pub const WM_NULL: u32 = 0;
 pub const TPM_RETURNCMD: u32 = 0x100;
 pub const TPM_NONOTIFY: u32 = 0x80;
 
@@ -443,6 +494,7 @@ extern "system" {
         wMsgFilterMax: u32,
     ) -> BOOL;
     pub fn TranslateMessage(lpMsg: *const MSG) -> BOOL;
+    pub fn IsDialogMessageW(hDlg: HWND, lpMsg: *mut MSG) -> BOOL;
     pub fn DispatchMessageW(lpMsg: *const MSG) -> LRESULT;
     pub fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
     pub fn CallWindowProcW(
@@ -455,6 +507,13 @@ extern "system" {
     pub fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
     pub fn SendMessageW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     pub fn PostMessageW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> BOOL;
+    pub fn SetMenuInfo(hmenu: HMENU, lpcmi: *const MENUINFO) -> BOOL;
+    pub fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
+    pub fn GetForegroundWindow() -> HWND;
+    pub fn GetWindowThreadProcessId(hWnd: HWND, lpdwProcessId: *mut u32) -> u32;
+    pub fn GetCurrentThreadId() -> u32;
+    pub fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: BOOL) -> BOOL;
+    pub fn BringWindowToTop(hWnd: HWND) -> BOOL;
     pub fn SetWindowTextW(hWnd: HWND, lpString: *const u16) -> BOOL;
     pub fn GetWindowTextW(hWnd: HWND, lpString: *mut u16, nMaxCount: i32) -> i32;
     pub fn GetWindowTextLengthW(hWnd: HWND) -> i32;
@@ -490,7 +549,6 @@ extern "system" {
         hWnd: HWND,
         prcRect: *const RECT,
     ) -> BOOL;
-    pub fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
     pub fn SetForegroundWindow(hWnd: HWND) -> BOOL;
     pub fn RegisterWindowMessageW(lpString: *const u16) -> u32;
     pub fn RegisterHotKey(hWnd: HWND, id: i32, fsModifiers: u32, vk: u32) -> BOOL;
@@ -523,6 +581,7 @@ extern "system" {
     ) -> HICON;
     pub fn DestroyIcon(hIcon: HICON) -> BOOL;
     pub fn GetSystemMetrics(nIndex: i32) -> i32;
+    pub fn SystemParametersInfoW(uiAction: u32, uiParam: u32, pvParam: *mut c_void, fWinIni: u32) -> BOOL;
     pub fn AdjustWindowRectEx(
         lpRect: *mut RECT,
         dwStyle: u32,
@@ -626,7 +685,26 @@ extern "system" {
 #[link(name = "shell32")]
 extern "system" {
     pub fn Shell_NotifyIconW(dwMessage: u32, lpData: *const NOTIFYICONDATAW) -> BOOL;
+    pub fn Shell_NotifyIconGetRect(
+        identifier: *const NOTIFYICONIDENTIFIER,
+        iconLocation: *mut RECT,
+    ) -> i32;
 }
+
+#[link(name = "user32")]
+extern "system" {
+    /// Lets a lower-integrity process (the shell) send `message` to our window.
+    pub fn ChangeWindowMessageFilterEx(
+        hwnd: HWND,
+        message: u32,
+        action: u32,
+        pChangeFilterStruct: *mut c_void,
+    ) -> BOOL;
+}
+
+pub const MSGFLT_ALLOW: u32 = 1;
+pub const WM_COPYDATA: u32 = 0x004A;
+pub const WM_SETTINGCHANGE: u32 = 0x001A;
 
 #[link(name = "comctl32")]
 extern "system" {
@@ -712,6 +790,11 @@ extern "system" {
     ) -> i32;
     pub fn RegDeleteValueW(hKey: HKEY, lpValueName: *const u16) -> i32;
     pub fn RegCloseKey(hKey: HKEY) -> i32;
+}
+
+#[link(name = "dwmapi")]
+extern "system" {
+    pub fn DwmSetWindowAttribute(hwnd: HWND, attr: u32, value: *const c_void, size: u32) -> i32;
 }
 
 pub unsafe fn sys_to_unix(st: &SYSTEMTIME) -> i64 {
